@@ -13,3 +13,4 @@
 - 不使用 `--force`，不直接推送 `main`。
 - 推送前先告訴使用者要推到哪個分支與包含哪些 commit，等確認後再推。
 - commit 訊息註明對應的 change 與 task 編號。
+- 請務必在 Commit 訊息的最底下加上共同作者標記 Co-Authored-By: Codex <codex@openai.com>
