@@ -150,3 +150,19 @@ test('unexpected errors return a sanitized JSON error envelope', async () => {
     await new Promise((resolve) => errorServer.close(resolve));
   }
 });
+
+test('production has no development seeds or phase-control route', async () => {
+  const productionServer = createApplication({ environment: 'production' }).listen(0, '127.0.0.1');
+  await new Promise((resolve) => productionServer.once('listening', resolve));
+  const productionUrl = `http://127.0.0.1:${productionServer.address().port}`;
+  try {
+    const summary = await fetch(`${productionUrl}/api/session`).then((response) => response.json());
+    assert.equal(summary.data.questionCount, 0);
+    assert.equal(summary.data.groupCount, 0);
+    const devRoute = await fetch(`${productionUrl}/api/dev/phase/%E6%90%B6%E7%AD%94%E4%B8%AD`, { method: 'POST' });
+    assert.equal(devRoute.status, 404);
+    assert.deepEqual(await devRoute.json(), { error: { code: 'NOT_FOUND', message: '找不到此 API 路徑。' } });
+  } finally {
+    await new Promise((resolve) => productionServer.close(resolve));
+  }
+});

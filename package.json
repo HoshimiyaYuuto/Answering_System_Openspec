@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node server/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "check:capacity": "node server/capacity-check.js"
   },
   "dependencies": {
     "express": "^5.1.0"
