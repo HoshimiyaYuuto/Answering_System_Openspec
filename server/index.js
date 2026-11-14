@@ -1,15 +1,6 @@
 import express from 'express';
-
-const app = express();
-const port = Number(process.env.PORT || 3000);
-const host = process.env.HOST || '0.0.0.0';
-const isDevelopment = process.env.NODE_ENV === 'development';
-
-const session = {
-  phase: '準備中',
-  questions: [],
-  groups: [],
-};
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 function isLoopback(address = '') {
   const normalized = address.toLowerCase().replace(/^::ffff:/, '');
@@ -25,61 +16,103 @@ function loopbackOnly(request, response, next) {
   next();
 }
 
-function sessionSummary() {
-  return {
-    phase: session.phase,
-    questionCount: session.questions.length,
-    groupCount: session.groups.length,
-    serverTime: new Date().toISOString(),
-  };
-}
+export function createApplication({ environment = process.env.NODE_ENV } = {}) {
+  const app = express();
+  const isDevelopment = environment === 'development';
+  const session = { phase: '準備中', questions: [], groups: [] };
+  const eventClients = new Set();
 
-app.get('/api/session', (_request, response) => {
-  response.json({ data: sessionSummary() });
-});
-
-app.post('/api/session/start', loopbackOnly, (_request, response) => {
-  if (session.phase !== '準備中') {
-    return response.status(409).json({
-      error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能開啟搶答。' },
-    });
+  function sessionSummary() {
+    return {
+      phase: session.phase,
+      questionCount: session.questions.length,
+      groupCount: session.groups.length,
+      serverTime: new Date().toISOString(),
+    };
   }
-  session.phase = '搶答中';
-  response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
-});
 
-app.post('/api/session/end', loopbackOnly, (_request, response) => {
-  if (session.phase !== '搶答中') {
-    return response.status(409).json({
-      error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能結束搶答。' },
-    });
+  function publishPhase() {
+    const payload = JSON.stringify({ phase: session.phase, serverTime: new Date().toISOString() });
+    for (const response of eventClients) response.write(`event: phase\ndata: ${payload}\n\n`);
   }
-  session.phase = '已結束';
-  response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
-});
 
-if (isDevelopment) {
-  session.questions = Array.from({ length: 50 }, (_, index) => ({
-    id: index + 1,
-    prompt: `開發測試題目 ${index + 1}`,
-  }));
-  session.groups = Array.from({ length: 100 }, (_, index) => ({
-    id: index + 1,
-    name: `第 ${index + 1} 組`,
-  }));
-
-  app.post('/api/dev/phase/:phase', loopbackOnly, (request, response) => {
-    const phases = ['準備中', '搶答中', '已結束'];
-    if (!phases.includes(request.params.phase)) {
-      return response.status(400).json({
-        error: { code: 'INVALID_PHASE', message: '指定的活動階段無效。' },
-      });
-    }
-    session.phase = request.params.phase;
+  app.get('/api/session', (_request, response) => {
     response.json({ data: sessionSummary() });
   });
+
+  app.get('/api/events', (request, response) => {
+    response.status(200);
+    response.set({
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    response.flushHeaders();
+    response.write('retry: 3000\n\n');
+    eventClients.add(response);
+
+    const heartbeat = setInterval(() => {
+      response.write(`event: heartbeat\ndata: ${JSON.stringify({ serverTime: new Date().toISOString() })}\n\n`);
+    }, 15_000);
+    request.on('close', () => {
+      clearInterval(heartbeat);
+      eventClients.delete(response);
+    });
+  });
+
+  app.post('/api/session/start', loopbackOnly, (_request, response) => {
+    if (session.phase !== '準備中') {
+      return response.status(409).json({
+        error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能開啟搶答。' },
+      });
+    }
+    session.phase = '搶答中';
+    publishPhase();
+    response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
+  });
+
+  app.post('/api/session/end', loopbackOnly, (_request, response) => {
+    if (session.phase !== '搶答中') {
+      return response.status(409).json({
+        error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能結束搶答。' },
+      });
+    }
+    session.phase = '已結束';
+    publishPhase();
+    response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
+  });
+
+  if (isDevelopment) {
+    session.questions = Array.from({ length: 50 }, (_, index) => ({
+      id: index + 1,
+      prompt: `開發測試題目 ${index + 1}`,
+    }));
+    session.groups = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      name: `第 ${index + 1} 組`,
+    }));
+
+    app.post('/api/dev/phase/:phase', loopbackOnly, (request, response) => {
+      const phases = ['準備中', '搶答中', '已結束'];
+      if (!phases.includes(request.params.phase)) {
+        return response.status(400).json({
+          error: { code: 'INVALID_PHASE', message: '指定的活動階段無效。' },
+        });
+      }
+      session.phase = request.params.phase;
+      publishPhase();
+      response.json({ data: sessionSummary() });
+    });
+  }
+
+  return app;
 }
 
-app.listen(port, host, () => {
-  console.log(`Answering System server listening on ${host}:${port}`);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const port = Number(process.env.PORT || 3000);
+  const host = process.env.HOST || '0.0.0.0';
+  createApplication().listen(port, host, () => {
+    console.log(`Answering System server listening on ${host}:${port}`);
+  });
+}
