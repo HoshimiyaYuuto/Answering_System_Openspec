@@ -16,8 +16,9 @@ function loopbackOnly(request, response, next) {
   next();
 }
 
-export function createApplication({ environment = process.env.NODE_ENV } = {}) {
+export function createApplication({ environment = process.env.NODE_ENV, exposeTestErrorRoute = false } = {}) {
   const app = express();
+  app.use(express.json({ limit: '16kb' }));
   const isDevelopment = environment === 'development';
   const session = { phase: '準備中', questions: [], groups: [] };
   const eventClients = new Set();
@@ -39,6 +40,12 @@ export function createApplication({ environment = process.env.NODE_ENV } = {}) {
   app.get('/api/session', (_request, response) => {
     response.json({ data: sessionSummary() });
   });
+
+  if (exposeTestErrorRoute) {
+    app.get('/api/__test__/error', () => {
+      throw new Error('test-only-secret-marker');
+    });
+  }
 
   app.get('/api/events', (request, response) => {
     response.status(200);
@@ -105,6 +112,28 @@ export function createApplication({ environment = process.env.NODE_ENV } = {}) {
       response.json({ data: sessionSummary() });
     });
   }
+
+  app.use('/api', (_request, response) => {
+    response.status(404).json({
+      error: { code: 'NOT_FOUND', message: '找不到此 API 路徑。' },
+    });
+  });
+
+  app.use((error, _request, response, _next) => {
+    if (error.type === 'entity.parse.failed') {
+      return response.status(400).json({
+        error: { code: 'INVALID_JSON', message: 'JSON 格式錯誤或請求欄位無效。' },
+      });
+    }
+    if (error.type === 'entity.too.large') {
+      return response.status(413).json({
+        error: { code: 'BODY_TOO_LARGE', message: 'JSON body 超過 16 KiB 上限。' },
+      });
+    }
+    response.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: '伺服器發生未預期錯誤。' },
+    });
+  });
 
   return app;
 }

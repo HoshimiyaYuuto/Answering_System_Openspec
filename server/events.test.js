@@ -100,3 +100,53 @@ test('SSE emits a named heartbeat with serverTime at the documented 15 second in
     stream.close();
   }
 });
+
+test('malformed JSON returns the documented JSON error envelope', async () => {
+  const response = await fetch(`${baseUrl}/api/session/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{invalid',
+  });
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get('content-type').split(';')[0], 'application/json');
+  const body = await response.json();
+  assert.deepEqual(body, { error: { code: 'INVALID_JSON', message: 'JSON 格式錯誤或請求欄位無效。' } });
+  assert.doesNotMatch(JSON.stringify(body), /stack|secret|Error:/i);
+});
+
+test('JSON body larger than 16 KiB returns the documented JSON error envelope', async () => {
+  const response = await fetch(`${baseUrl}/api/session/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: 'x'.repeat(16 * 1024) }),
+  });
+  assert.equal(response.status, 413);
+  assert.equal(response.headers.get('content-type').split(';')[0], 'application/json');
+  const body = await response.json();
+  assert.deepEqual(body, { error: { code: 'BODY_TOO_LARGE', message: 'JSON body 超過 16 KiB 上限。' } });
+  assert.doesNotMatch(JSON.stringify(body), /stack|secret|Error:/i);
+});
+
+test('unknown API paths return the documented JSON error envelope', async () => {
+  const response = await fetch(`${baseUrl}/api/not-a-route`);
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get('content-type').split(';')[0], 'application/json');
+  const body = await response.json();
+  assert.deepEqual(body, { error: { code: 'NOT_FOUND', message: '找不到此 API 路徑。' } });
+  assert.doesNotMatch(JSON.stringify(body), /stack|secret|Error:/i);
+});
+
+test('unexpected errors return a sanitized JSON error envelope', async () => {
+  const errorServer = createApplication({ environment: 'test', exposeTestErrorRoute: true }).listen(0, '127.0.0.1');
+  await new Promise((resolve) => errorServer.once('listening', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${errorServer.address().port}/api/__test__/error`);
+    assert.equal(response.status, 500);
+    assert.equal(response.headers.get('content-type').split(';')[0], 'application/json');
+    const body = await response.json();
+    assert.deepEqual(body, { error: { code: 'INTERNAL_ERROR', message: '伺服器發生未預期錯誤。' } });
+    assert.doesNotMatch(JSON.stringify(body), /stack|secret|Error:|test-only-secret-marker/i);
+  } finally {
+    await new Promise((resolve) => errorServer.close(resolve));
+  }
+});
