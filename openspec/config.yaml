@@ -5,24 +5,42 @@ context: |
   All artifacts must be written in zh-TW.
   Keep OpenSpec structural headings and SHALL/MUST keywords in English.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always state what is out of scope
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  專案：課堂搶答系統（NCU 軟體工程期末專題，OpenSpec 組）。老師匯入 Guided Notes（填空學習單），
+  學生以組別為單位在各自裝置上每題搶答，server 收到順序最快者為該題成功答案，結束後匯出寫回
+  Guided Notes。系統不判斷答案對錯。
+  需求來源：docs/explore-summary.md（第 0 節為工作規則）。API 契約：docs/api-contract.md。
+  技術：Node.js + Express（REST）+ SSE。狀態存記憶體。前端為 public/student 與 public/teacher 的
+  輕量網頁，不引入重型框架（除非 design 說明理由）。本機運作，可由同網段裝置連線。
+  慣例：
+  - 階段值固定為「準備中」「搶答中」「已結束」，一律從 docs/api-contract.md 複製，不得自訂。
+  - API 回應皆為 JSON。成功為 {"data": ...}，錯誤為 {"error":{"code","message"}}。
+  - 時間一律由 server 產生，使用 ISO 8601 UTC。
+  - 密碼與金鑰只放 .env，repo 只放不含真值的 .env.example。
+  - 教師端須以 localhost 開啟（階段控制目前限 loopback）。
+  - 程式識別字與 capability 名稱用英文。
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+rules:
+  proposal:
+    - 只涵蓋指定的一個 change，不得加入範圍外的功能。
+    - 註明對應 docs/explore-summary.md 的哪些章節。
+  specs:
+    - 每個 Requirement 使用 SHALL，且至少有一個 Scenario。
+    - 修改既有能力用 MODIFIED，標題須與主規格完全一致，並寫出修改後的完整內容。
+    - 新增或修改 API 端點時，須同步更新 docs/api-contract.md。
+  design:
+    - 列出替代方案與取捨，並說明與 docs/api-contract.md 的一致性。
+    - 不得出現真實密碼或金鑰。
+  tasks:
+    - 每個 task 一次只動 1 到 2 個檔案，並附上驗證方式。
+    - 驗證須包含自動測試，以及可手動執行的指令。
+
+operations:
+  apply:
+    guidance:
+      - 只做指定的 tasks，驗證通過才打勾。
+      - 實作與契約不一致時先停下回報，不要自行修改契約。
+      - 完成後簡短列出改動的檔案與執行過的驗證指令。
+  archive:
+    guidance:
+      - 已同步的 delta spec 不重複同步。
+      - 結束前簡述歸檔結果。
