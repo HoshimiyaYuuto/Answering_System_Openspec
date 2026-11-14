@@ -18,12 +18,12 @@
 
 ## 2. 範圍與分工
 
-| 區塊 | 內容 | 預設負責 |
+| 區塊 | 內容 | 負責 |
 | --- | --- | --- |
-| 學生端 | `public/student/`：進場選組、作答、送出、結果頁 | 學生端成員 |
-| server 核心 | 階段狀態機、組別、送出接收與排序、同步、倒數 | 待確認（預設學生端成員） |
-| 教師端 | `public/teacher/`：活動控制、監看、結果、改選勝者 | 教師端成員 |
-| 資料進出 | Guided Notes 匯入、匯出 xlsx、csv | 教師端成員 |
+| 學生端 | `public/student/`：選組別、選題號、作答、送出、結果頁、斷線重連 | 學生端成員 |
+| server 核心 | 活動階段狀態機、送出接收與排序、階段同步、公平順位、倒數、作廢與最終勝者的資料模型 | 學生端成員 |
+| 教師端 | `public/teacher/`：活動控制、監看、改選勝者、結果頁、組別設定畫面 | 教師端成員 |
+| 資料進出 | Guided Notes 匯入、匯出 xlsx（動態定位填空格）、csv 匯出 | 教師端成員 |
 
 專案目錄：`public/student/`、`public/teacher/`、`server/`、`docs/`（API 契約放 `docs/api-contract.md`）。分支：`main`、`feat/student-quiz`。
 
@@ -65,22 +65,24 @@
 
 ## 5. 能力拆分與優先級
 
-| 能力（spec） | 內容 | 優先級 |
-| --- | --- | --- |
-| session-lifecycle | 階段狀態機、全員同步（2 秒內）、重設 | P0 |
-| groups-and-entry | 組別設定、學生進場、換組、重連 | P0 |
-| guided-notes-import | 匯入、摘要確認、動態辨識 | P0 |
-| buzz-in-submission | 送出、鎖定、server 排序、競態處理 | P0 |
-| student-ui | 學生端所有畫面（第 6 節） | P0 |
-| teacher-monitoring-results | 監看、結果、老師登入 | P0 |
-| export-guided-notes | 寫回 xlsx | P0 |
-| countdown | 倒數與自動結束 | P1 |
-| csv-export | 匯出活動結果 | P1 |
-| void-submission | D24 作廢 | P1 |
-| challenge-override | O3 結束後改選 | P1 |
-| question-groups | 題組匯入與整題送出（D10） | P2 |
-| fair-ranking | D14 | P2 |
-| projection-board | D16 | P2 |
+能力名稱為建議值，實際以 OpenSpec 產生的資料夾名稱為準。負責欄中「學生端成員」指負責 `public/student/` 與 server 核心者，「教師端成員」指負責 `public/teacher/` 與資料進出者。
+
+| 能力（spec） | 內容 | 優先級 | 負責 |
+| --- | --- | --- | --- |
+| api-contract-and-session-lifecycle | API 契約、階段狀態機、全員同步（2 秒內）、統一錯誤格式（已完成並歸檔） | P0 | 學生端成員 |
+| groups-and-entry | 組別設定、學生進場、換組、重連、靜態檔案提供 | P0 | 學生端成員（API 與學生端）；教師端成員（組別設定畫面） |
+| guided-notes-import | 匯入、摘要確認、動態辨識 | P0 | 教師端成員 |
+| buzz-in-submission | 送出、鎖定、server 排序、競態處理、題目資料結構 | P0 | 學生端成員 |
+| student-ui | 學生端所有畫面（第 6 節） | P0 | 學生端成員 |
+| teacher-monitoring-results | 監看、結果、老師登入 | P0 | 教師端成員（資料來源為 server） |
+| export-guided-notes | 寫回 xlsx | P0 | 教師端成員 |
+| countdown | 倒數與自動結束 | P1 | 學生端成員（server 計時、學生端顯示）；教師端成員（老師設定） |
+| csv-export | 匯出活動結果 | P1 | 教師端成員 |
+| void-submission | D24 作廢 | P1 | 學生端成員（server）；教師端成員（操作畫面） |
+| challenge-override | O3 結束後改選 | P1 | 學生端成員（最終勝者資料模型）；教師端成員（操作畫面與匯出） |
+| question-groups | 題組匯入與整題送出（D10） | P2 | 教師端成員（匯入）；學生端成員（送出與學生端） |
+| fair-ranking | D14 公平順位 | P2 | 學生端成員 |
+| projection-board | D16 投影看板 | P2 | 教師端成員 |
 
 ## 6. 學生端需求（核心）
 
@@ -131,11 +133,10 @@
 
 ## 10. 待確認（下次 meeting 與另一組討論）
 
-- Q1 server 核心由誰負責（預設學生端成員，視額度調整）。
-- Q2 O1 組數上限提高到 100、O2 一鍵產生組名。
-- Q3 O3 結束後改選勝者是否納入共同契約（E5）。
-- Q4 D1、D12 是否一起詢問助教。
-- Q5 官方 Guided Notes 範本的實際欄位結構（請放入 `fixtures/guided-notes/`）。
+- Q1 O1 組數上限提高到 100、O2 一鍵產生組名。
+- Q2 O3 結束後改選勝者是否納入共同契約（E5）。
+- Q3 D1、D12 是否一起詢問助教。
+- Q4 官方 Guided Notes 範本的實際欄位結構（請放入 `fixtures/guided-notes/`）。
 
 ## 11. 建議的 OpenSpec change 順序
 
