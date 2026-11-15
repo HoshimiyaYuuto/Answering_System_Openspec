@@ -2,7 +2,7 @@
 
 ## 1. API 契約
 
-- [ ] 1.1 更新 `docs/api-contract.md`，定義 `GET/PUT /api/groups`、`POST /api/groups/generate`、`GET/PUT /api/student/entry` 的 request/response、階段與 loopback 限制、`studentId` 格式、首次進場規則，以及錯誤代碼（例如 `INVALID_GROUPS`、`GROUP_NOT_FOUND`、`GROUP_CHANGE_NOT_ALLOWED`、`INVALID_STUDENT_ID`）；以逐 endpoint 對照 spec 核對文件欄位驗證，並在 PR 說明標註契約變更。
+- [x] 1.1 更新 `docs/api-contract.md`，定義 `GET/PUT /api/groups`、`POST /api/groups/generate`、`GET/PUT /api/student/entry` 的 request/response、階段與 loopback 限制、`studentId` 格式、首次進場規則，以及錯誤代碼（例如 `INVALID_GROUPS`、`GROUP_NOT_FOUND`、`GROUP_CHANGE_NOT_ALLOWED`、`INVALID_STUDENT_ID`）；以逐 endpoint 對照 spec 核對文件欄位驗證，並在 PR 說明標註契約變更。
 
 ## 2. 組別 API
 
