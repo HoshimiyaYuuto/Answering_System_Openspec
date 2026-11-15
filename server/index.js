@@ -1,6 +1,7 @@
 import express from 'express';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createDevelopmentGroupSeed, createGroupsEntry, InvalidGroupsError } from './groups-entry.js';
 
 function isLoopback(address = '') {
   const normalized = address.toLowerCase().replace(/^::ffff:/, '');
@@ -20,14 +21,15 @@ export function createApplication({ environment = process.env.NODE_ENV, exposeTe
   const app = express();
   app.use(express.json({ limit: '16kb' }));
   const isDevelopment = environment === 'development';
-  const session = { phase: '準備中', questions: [], groups: [] };
+  const groups = createGroupsEntry({ seed: isDevelopment ? createDevelopmentGroupSeed() : [] });
+  const session = { phase: '準備中', questions: [], groups };
   const eventClients = new Set();
 
   function sessionSummary() {
     return {
       phase: session.phase,
       questionCount: session.questions.length,
-      groupCount: session.groups.length,
+      groupCount: session.groups.count(),
       serverTime: new Date().toISOString(),
     };
   }
@@ -40,6 +42,35 @@ export function createApplication({ environment = process.env.NODE_ENV, exposeTe
   app.get('/api/session', (_request, response) => {
     response.json({ data: sessionSummary() });
   });
+
+  app.get('/api/groups', (_request, response) => {
+    response.json({ data: { groups: session.groups.list() } });
+  });
+
+  function configureGroups(request, response, operation) {
+    if (!isLoopback(request.socket.remoteAddress)) {
+      return response.status(403).json({
+        error: { code: 'LOOPBACK_ONLY', message: '此操作僅允許本機呼叫。' },
+      });
+    }
+    if (session.phase !== '準備中') {
+      return response.status(409).json({
+        error: { code: 'GROUP_CONFIG_NOT_ALLOWED', message: '僅能在準備中設定組別。' },
+      });
+    }
+    try {
+      const result = operation();
+      return response.json({ data: { groups: result } });
+    } catch (error) {
+      if (error instanceof InvalidGroupsError) {
+        return response.status(400).json({ error: { code: 'INVALID_GROUPS', message: error.message } });
+      }
+      throw error;
+    }
+  }
+
+  app.put('/api/groups', (request, response) => configureGroups(request, response, () => session.groups.replace(request.body?.groups)));
+  app.post('/api/groups/generate', (request, response) => configureGroups(request, response, () => session.groups.generate(request.body?.count)));
 
   if (exposeTestErrorRoute) {
     app.get('/api/__test__/error', () => {
@@ -95,11 +126,6 @@ export function createApplication({ environment = process.env.NODE_ENV, exposeTe
       id: index + 1,
       prompt: `開發測試題目 ${index + 1}`,
     }));
-    session.groups = Array.from({ length: 100 }, (_, index) => ({
-      id: index + 1,
-      name: `第 ${index + 1} 組`,
-    }));
-
     app.post('/api/dev/phase/:phase', loopbackOnly, (request, response) => {
       const phases = ['準備中', '搶答中', '已結束'];
       if (!phases.includes(request.params.phase)) {

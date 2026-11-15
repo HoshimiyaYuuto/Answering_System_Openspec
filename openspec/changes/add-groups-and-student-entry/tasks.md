@@ -6,8 +6,8 @@
 
 ## 2. 組別 API
 
-- [ ] 2.1 新增 `server/groups-entry.js`（組別儲存與驗證：數量 1–100、id 為不重複正整數、名稱去空白後 1–30 字元且不重複、generate）與 `server/groups-entry.test.js` 單元測試；以 `npm test` 驗證。
-- [ ] 2.2 修改 `server/index.js` 掛載 `GET/PUT /api/groups`、`POST /api/groups/generate`，加入 loopback 與「準備中」檢查，`groupCount` 取自實際組別數，development 種子改走同一儲存；在測試檔補：非 loopback（含偽造 forwarded header）與非準備中被拒、PUT 可取代種子組別、production 起始為空；以 `npm test` 及 `Invoke-RestMethod http://localhost:3000/api/groups` 手動驗證。
+- [x] 2.1 新增 `server/groups-entry.js`（組別儲存與驗證：數量 1–100、id 為不重複正整數、名稱去空白後 1–30 字元且不重複、generate）與 `server/groups-entry.test.js` 單元測試；以 `npm test` 驗證。
+- [x] 2.2 修改 `server/index.js` 掛載 `GET/PUT /api/groups`、`POST /api/groups/generate`，加入 loopback 與「準備中」檢查，`groupCount` 取自實際組別數，development 種子改走同一儲存；在測試檔補：非 loopback（含偽造 forwarded header）與非準備中被拒、PUT 可取代種子組別、production 起始為空；以 `npm test` 及 `Invoke-RestMethod http://localhost:3000/api/groups` 手動驗證。
 
 ## 3. 學生進場 API
 
