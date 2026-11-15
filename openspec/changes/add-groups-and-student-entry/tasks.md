@@ -22,7 +22,7 @@
 
 - [x] 5.1 新增 `public/student/logic.js`（可同時被瀏覽器與 Node 載入的純函式：超過 40 秒無事件判定為「重新連線中」、進場恢復結果判斷）與 `public/student/logic.test.js`；以 `npm test` 驗證。
 - [x] 5.2 新增 `public/student/index.html` 與 `public/student/app.js`：組別清單（空清單顯示「老師尚未設定組別」）、選組、準備中等待畫面、選到不存在組別時重新讀取清單；以 `npm start` 後開啟 `http://localhost:3000/student/` 手動完成選組與等待流程。
-- [ ] 5.3 更新 `public/student/app.js`：`localStorage` 保存 `studentId`、重新整理恢復、組別失效返回選組並說明原因、以 `phase` 與 `heartbeat` 同步階段、EventSource 重連後重新讀 session 與 entry；以兩個瀏覽器視窗手動驗證。
+- [x] 5.3 更新 `public/student/app.js`：`localStorage` 保存 `studentId`、重新整理恢復、組別失效返回選組並說明原因、以 `phase` 與 `heartbeat` 同步階段、EventSource 重連後重新讀 session 與 entry；以兩個瀏覽器視窗手動驗證。
 
 ## 6. 臨時教師組別設定頁
 
@@ -30,4 +30,4 @@
 
 ## 7. 整合驗收
 
-- [ ] 7.1 `npm test` 全部通過（含第一個 change 既有測試）；手動驗證：(a) 在 localhost 用 `/teacher/` 產生 5 組；(b) 兩個視窗選不同組、第三個視窗選同組；(c) 重新整理後恢復；(d) 老師開始後兩視窗兩秒內變「搶答中」；(e) 搶答中換組被拒；(f) 搶答中用沒有 localStorage 的新視窗首次進場成功；(g) 準備中移除某組，該組學生重新整理後回選組並顯示原因；(h) 以電腦瀏覽器用區網 IP 開 /student/（window.isSecureContext 為 false）選組成功，並確認 /teacher/ 以區網 IP 開啟時顯示警告且無法寫入；真實手機未驗證，記錄於實作心得(i) 重啟 server 後學生端顯示重新連線並回選組；結果記錄於 `docs/verification/`。
+- [x] 7.1 `npm test` 全部通過（含第一個 change 既有測試）；手動驗證：(a) 在 localhost 用 `/teacher/` 產生 5 組；(b) 兩個視窗選不同組、第三個視窗選同組；(c) 重新整理後恢復；(d) 老師開始後兩視窗兩秒內變「搶答中」；(e) 搶答中換組被拒；(f) 搶答中用沒有 localStorage 的新視窗首次進場成功；(g) 準備中移除某組，該組學生重新整理後回選組並顯示原因；(h) 以電腦瀏覽器用區網 IP 開 /student/（window.isSecureContext 為 false）選組成功，並確認 /teacher/ 以區網 IP 開啟時顯示警告且無法寫入；真實手機未驗證，記錄於實作心得(i) 重啟 server 後學生端顯示重新連線並回選組；結果記錄於 `docs/verification/`。

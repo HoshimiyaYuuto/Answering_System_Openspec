@@ -20,6 +20,10 @@ function loopbackOnly(request, response, next) {
 export function createApplication({ environment = process.env.NODE_ENV, exposeTestErrorRoute = false } = {}) {
   const app = express();
   const publicRoot = resolve('public');
+  app.use('/api', (_request, response, next) => {
+    response.set('Cache-Control', 'no-store');
+    next();
+  });
   app.get('/', (_request, response) => response.redirect('/student/'));
   app.use('/student', express.static(resolve(publicRoot, 'student')));
   app.use('/teacher', express.static(resolve(publicRoot, 'teacher')));

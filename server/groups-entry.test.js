@@ -104,6 +104,19 @@ test('production group storage starts empty; generated groups are returned throu
   }
 });
 
+test('group and session API responses disable caching', async () => {
+  const { server, url } = await startApp('production');
+  try {
+    for (const path of ['/api/groups', '/api/session']) {
+      const response = await fetch(`${url}${path}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 function findExternalIPv4() {
   for (const addresses of Object.values(os.networkInterfaces())) {
     for (const entry of addresses ?? []) {
