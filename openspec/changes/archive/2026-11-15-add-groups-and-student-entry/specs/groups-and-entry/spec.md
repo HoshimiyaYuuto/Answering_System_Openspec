@@ -61,6 +61,10 @@ server SHALL 提供目前組別清單；`GET /api/session` 的 `groupCount` SHAL
 ### Requirement: Students enter a group without accounts
 學生 SHALL 可免帳號密碼選擇現有組別進場；同一組 SHALL 可由多個瀏覽器/裝置同時使用。
 
+#### Scenario: Enter without an account
+- **WHEN** 學生未建立帳號或提供密碼而選擇現有組別
+- **THEN** server 接受其進場並記錄所選組別
+
 ### Requirement: First entry is allowed in any phase
 從未進場過的學生識別碼 SHALL 可在任一階段選擇現有組別進場；選擇不存在的組別或使用格式不符的學生識別碼 SHALL 被拒絕，並回傳契約格式 JSON 錯誤。
 
