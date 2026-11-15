@@ -19,6 +19,10 @@ function loopbackOnly(request, response, next) {
 
 export function createApplication({ environment = process.env.NODE_ENV, exposeTestErrorRoute = false } = {}) {
   const app = express();
+  const publicRoot = resolve('public');
+  app.get('/', (_request, response) => response.redirect('/student/'));
+  app.use('/student', express.static(resolve(publicRoot, 'student')));
+  app.use('/teacher', express.static(resolve(publicRoot, 'teacher')));
   app.use(express.json({ limit: '16kb' }));
   const isDevelopment = environment === 'development';
   const groups = createGroupsEntry({ seed: isDevelopment ? createDevelopmentGroupSeed() : [] });

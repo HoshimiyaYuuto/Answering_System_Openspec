@@ -233,3 +233,28 @@ test('unknown student entry lookup returns entry_reset', async () => {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('student and teacher static entry points serve HTML and root redirects to student', async () => {
+  const { server, url } = await startApp('production');
+  try {
+    const student = await fetch(`${url}/student/`);
+    assert.equal(student.status, 200);
+    assert.match(student.headers.get('content-type'), /text\/html/);
+    assert.match(await student.text(), /<h1>學生端<\/h1>/);
+
+    const teacher = await fetch(`${url}/teacher/`);
+    assert.equal(teacher.status, 200);
+    assert.match(teacher.headers.get('content-type'), /text\/html/);
+    assert.match(await teacher.text(), /<h1>教師端<\/h1>/);
+
+    const root = await fetch(url, { redirect: 'manual' });
+    assert.equal(root.status, 302);
+    assert.equal(root.headers.get('location'), '/student/');
+
+    const unknownApi = await fetch(`${url}/api/not-a-route`);
+    assert.equal(unknownApi.status, 404);
+    assert.equal((await unknownApi.json()).error.code, 'NOT_FOUND');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

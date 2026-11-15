@@ -16,11 +16,11 @@
 
 ## 4. 靜態頁面提供
 
-- [ ] 4.1 在 `server/index.js` 掛載 `/student/`、`/teacher/` 靜態路徑，`/` 導向 `/student/`；測試補三個入口的回應，並以 `Invoke-WebRequest` 手動驗證。
+- [x] 4.1 在 `server/index.js` 掛載 `/student/`、`/teacher/` 靜態路徑，`/` 導向 `/student/`；測試補三個入口的回應，並以 `Invoke-WebRequest` 手動驗證。
 
 ## 5. 學生端
 
-- [ ] 5.1 新增 `public/student/logic.js`（可同時被瀏覽器與 Node 載入的純函式：超過 40 秒無事件判定為「重新連線中」、進場恢復結果判斷）與 `public/student/logic.test.js`；以 `npm test` 驗證。
+- [x] 5.1 新增 `public/student/logic.js`（可同時被瀏覽器與 Node 載入的純函式：超過 40 秒無事件判定為「重新連線中」、進場恢復結果判斷）與 `public/student/logic.test.js`；以 `npm test` 驗證。
 - [ ] 5.2 新增 `public/student/index.html` 與 `public/student/app.js`：組別清單（空清單顯示「老師尚未設定組別」）、選組、準備中等待畫面、選到不存在組別時重新讀取清單；以 `npm start` 後開啟 `http://localhost:3000/student/` 手動完成選組與等待流程。
 - [ ] 5.3 更新 `public/student/app.js`：`localStorage` 保存 `studentId`、重新整理恢復、組別失效返回選組並說明原因、以 `phase` 與 `heartbeat` 同步階段、EventSource 重連後重新讀 session 與 entry；以兩個瀏覽器視窗手動驗證。
 
