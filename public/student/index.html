@@ -1,5 +1,41 @@
 <!doctype html>
 <html lang="zh-Hant">
-<head><meta charset="utf-8"><title>學生端</title></head>
-<body><h1>學生端</h1></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f7fb">
+  <title>學生選組｜課堂搶答</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; color: #172033; background: #f4f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; padding: 24px 16px; }
+    main { width: min(100%, 560px); margin: 0 auto; }
+    h1 { margin: 8px 0 24px; font-size: clamp(1.8rem, 7vw, 2.4rem); }
+    .card { padding: 24px; border-radius: 20px; background: white; box-shadow: 0 8px 28px #17203312; }
+    .group-list { display: grid; gap: 12px; margin-top: 16px; }
+    button { min-height: 56px; width: 100%; padding: 14px 18px; border: 0; border-radius: 14px; color: white; background: #2357d8; font: inherit; font-size: 1.1rem; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .secondary { margin-top: 16px; color: #17366f; background: #e8efff; }
+    .message { min-height: 1.6em; color: #a12626; line-height: 1.5; }
+    .hint { color: #4b5870; line-height: 1.6; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>課堂搶答</h1>
+    <section id="selection" class="card" aria-labelledby="selection-title">
+      <h2 id="selection-title">選擇組別</h2>
+      <p id="status" class="message" role="status" aria-live="polite"></p>
+      <div id="groups" class="group-list"></div>
+      <button id="refresh" class="secondary" type="button" hidden>重新整理</button>
+    </section>
+    <section id="waiting" class="card" hidden aria-labelledby="waiting-title">
+      <h2 id="waiting-title">等待活動</h2>
+      <p>你的組別：<strong id="group-name"></strong></p>
+      <p class="hint">目前階段：準備中。請稍候，老師開始活動後再繼續。</p>
+    </section>
+  </main>
+  <script type="module" src="/student/app.js"></script>
+</body>
 </html>

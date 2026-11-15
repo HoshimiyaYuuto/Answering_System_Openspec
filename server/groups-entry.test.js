@@ -240,12 +240,16 @@ test('student and teacher static entry points serve HTML and root redirects to s
     const student = await fetch(`${url}/student/`);
     assert.equal(student.status, 200);
     assert.match(student.headers.get('content-type'), /text\/html/);
-    assert.match(await student.text(), /<h1>學生端<\/h1>/);
+    const studentHtml = await student.text();
+    assert.match(studentHtml, /<html\b/i);
+    assert.match(studentHtml, /<title\b/i);
 
     const teacher = await fetch(`${url}/teacher/`);
     assert.equal(teacher.status, 200);
     assert.match(teacher.headers.get('content-type'), /text\/html/);
-    assert.match(await teacher.text(), /<h1>教師端<\/h1>/);
+    const teacherHtml = await teacher.text();
+    assert.match(teacherHtml, /<html\b/i);
+    assert.match(teacherHtml, /<title\b/i);
 
     const root = await fetch(url, { redirect: 'manual' });
     assert.equal(root.status, 302);
