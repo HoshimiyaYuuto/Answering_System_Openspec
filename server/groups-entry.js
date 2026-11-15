@@ -38,24 +38,66 @@ function validateGroups(groups) {
 
 export function createGroupsEntry({ seed = [] } = {}) {
   let groups = Array.isArray(seed) && seed.length === 0 ? [] : validateGroups(seed);
+  const entries = new Map();
+
+  function replaceGroups(nextGroups) {
+    const validated = validateGroups(nextGroups);
+    const remainingIds = new Set(validated.map(({ id }) => id));
+    for (const entry of entries.values()) {
+      if (!remainingIds.has(entry.groupId)) entry.removed = true;
+    }
+    groups = validated;
+    return groups.map(({ id, name }) => ({ id, name }));
+  }
 
   return {
     list() {
       return groups.map(({ id, name }) => ({ id, name }));
     },
     replace(nextGroups) {
-      groups = validateGroups(nextGroups);
-      return this.list();
+      return replaceGroups(nextGroups);
     },
     generate(count) {
       if (!Number.isInteger(count) || count < MIN_GROUPS || count > MAX_GROUPS) {
         throw new InvalidGroupsError('組數必須為 1 至 100 的整數。');
       }
       groups = Array.from({ length: count }, (_, index) => ({ id: index + 1, name: `第 ${index + 1} 組` }));
+      const remainingIds = new Set(groups.map(({ id }) => id));
+      for (const entry of entries.values()) {
+        if (!remainingIds.has(entry.groupId)) entry.removed = true;
+      }
       return this.list();
     },
     count() {
       return groups.length;
+    },
+    enter(studentId, groupId, phase) {
+      if (typeof studentId !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(studentId)) {
+        return { error: { status: 400, code: 'INVALID_STUDENT_ID', message: 'studentId 格式無效。' } };
+      }
+      if (!Number.isInteger(groupId)) {
+        return { error: { status: 400, code: 'INVALID_GROUPS', message: 'groupId 必須是整數。' } };
+      }
+      const group = groups.find((candidate) => candidate.id === groupId);
+      if (!group) return { error: { status: 404, code: 'GROUP_NOT_FOUND', message: '找不到指定組別。' } };
+
+      const current = entries.get(studentId);
+      if (current && !current.removed && current.groupId !== groupId && phase !== '準備中') {
+        return { error: { status: 409, code: 'GROUP_CHANGE_NOT_ALLOWED', message: '僅能在準備中更換組別。' } };
+      }
+      entries.set(studentId, { groupId, removed: false });
+      return { data: { valid: true, studentId, group: { ...group }, phase } };
+    },
+    lookup(studentId, phase) {
+      if (typeof studentId !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(studentId)) {
+        return { error: { status: 400, code: 'INVALID_STUDENT_ID', message: 'studentId 格式無效。' } };
+      }
+      const entry = entries.get(studentId);
+      if (!entry) return { data: { valid: false, studentId, reason: 'entry_reset' } };
+      if (entry.removed) return { data: { valid: false, studentId, reason: 'group_removed' } };
+      const group = groups.find((candidate) => candidate.id === entry.groupId);
+      if (!group) return { data: { valid: false, studentId, reason: 'group_removed' } };
+      return { data: { valid: true, studentId, group: { ...group }, phase } };
     },
   };
 }

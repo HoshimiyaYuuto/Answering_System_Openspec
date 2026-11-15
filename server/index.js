@@ -72,6 +72,24 @@ export function createApplication({ environment = process.env.NODE_ENV, exposeTe
   app.put('/api/groups', (request, response) => configureGroups(request, response, () => session.groups.replace(request.body?.groups)));
   app.post('/api/groups/generate', (request, response) => configureGroups(request, response, () => session.groups.generate(request.body?.count)));
 
+  app.put('/api/student/entry', (request, response) => {
+    const result = session.groups.enter(request.body?.studentId, request.body?.groupId, session.phase);
+    if (result.error) {
+      const { status, ...error } = result.error;
+      return response.status(status).json({ error });
+    }
+    response.json({ data: result.data });
+  });
+
+  app.get('/api/student/entry', (request, response) => {
+    const result = session.groups.lookup(request.query.studentId, session.phase);
+    if (result.error) {
+      const { status, ...error } = result.error;
+      return response.status(status).json({ error });
+    }
+    response.json({ data: result.data });
+  });
+
   if (exposeTestErrorRoute) {
     app.get('/api/__test__/error', () => {
       throw new Error('test-only-secret-marker');

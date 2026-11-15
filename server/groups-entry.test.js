@@ -138,3 +138,98 @@ test('non-loopback socket is rejected even with a forged forwarded header', asyn
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('student entry supports anonymous first entry, shared groups, and restoration', async () => {
+  const { server, url } = await startApp('production');
+  try {
+    await fetch(`${url}/api/groups/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ count: 2 }),
+    });
+    const enter = (studentId, groupId) => fetch(`${url}/api/student/entry`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ studentId, groupId }),
+    });
+    const first = await enter('student-01', 1);
+    assert.equal(first.status, 200);
+    assert.equal((await first.json()).data.group.id, 1);
+    assert.equal((await enter('student-02', 1)).status, 200);
+    const restored = await fetch(`${url}/api/student/entry?studentId=student-01`).then((response) => response.json());
+    assert.deepEqual(restored.data, {
+      valid: true, studentId: 'student-01', group: { id: 1, name: '第 1 組' }, phase: '準備中',
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('student entry validates ids and group existence, and allows first entry during buzzer phase', async () => {
+  const { server, url } = await startApp('development');
+  try {
+    const put = (studentId, groupId) => fetch(`${url}/api/student/entry`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ studentId, groupId }),
+    });
+    assert.equal((await put('bad!', 1)).status, 400);
+    const badGroup = await put('student-01', 999);
+    assert.equal(badGroup.status, 404);
+    assert.equal((await badGroup.json()).error.code, 'GROUP_NOT_FOUND');
+    await fetch(`${url}/api/dev/phase/%E6%90%B6%E7%AD%94%E4%B8%AD`, { method: 'POST' });
+    assert.equal((await put('student-01', 1)).status, 200);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('during buzzer phase changing groups is rejected but repeating the same group succeeds', async () => {
+  const { server, url } = await startApp('development');
+  try {
+    const put = (groupId) => fetch(`${url}/api/student/entry`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ studentId: 'student-01', groupId }),
+    });
+    await put(1);
+    await fetch(`${url}/api/dev/phase/%E6%90%B6%E7%AD%94%E4%B8%AD`, { method: 'POST' });
+    const change = await put(2);
+    assert.equal(change.status, 409);
+    assert.equal((await change.json()).error.code, 'GROUP_CHANGE_NOT_ALLOWED');
+    assert.equal((await put(1)).status, 200);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('removed group invalidates entries permanently until the student enters again', async () => {
+  const { server, url } = await startApp('production');
+  try {
+    const putGroups = (groups) => fetch(`${url}/api/groups`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ groups }),
+    });
+    const enter = () => fetch(`${url}/api/student/entry`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ studentId: 'student-01', groupId: 1 }),
+    });
+    await putGroups([{ id: 1, name: '舊組名' }]);
+    await enter();
+    await putGroups([{ id: 2, name: '另一組' }]);
+    await putGroups([{ id: 1, name: '新組名' }]);
+    const removed = await fetch(`${url}/api/student/entry?studentId=student-01`).then((response) => response.json());
+    assert.equal(removed.data.valid, false);
+    assert.equal(removed.data.reason, 'group_removed');
+    await enter();
+    const restored = await fetch(`${url}/api/student/entry?studentId=student-01`).then((response) => response.json());
+    assert.equal(restored.data.group.name, '新組名');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('unknown student entry lookup returns entry_reset', async () => {
+  const { server, url } = await startApp('production');
+  try {
+    const response = await fetch(`${url}/api/student/entry?studentId=student-unknown`);
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).data, {
+      valid: false, studentId: 'student-unknown', reason: 'entry_reset',
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

@@ -11,8 +11,8 @@
 
 ## 3. 學生進場 API
 
-- [ ] 3.1 在 `server/groups-entry.js` 實作 `studentId` 格式驗證、進場儲存、首次進場任一階段、換組僅限準備中、`GROUP_NOT_FOUND`、`group_removed` 與 `entry_reset` 失效原因，並在測試檔補單元測試；以 `npm test` 驗證。
-- [ ] 3.2 在 `server/index.js` 掛載 `PUT/GET /api/student/entry`；測試補：免帳號首次進場、多個 `studentId` 共用同組、搶答中換組被拒、搶答中首次進場被接受、刪組後 GET 回 `valid:false`；以 `npm test` 及 `Invoke-RestMethod` 手動驗證。
+- [x] 3.1 在 `server/groups-entry.js` 實作 `studentId` 格式驗證、進場儲存、首次進場任一階段、換組僅限準備中、`GROUP_NOT_FOUND`、`group_removed` 與 `entry_reset` 失效原因，並在測試檔補單元測試；以 `npm test` 驗證。
+- [x] 3.2 在 `server/index.js` 掛載 `PUT/GET /api/student/entry`；測試補：免帳號首次進場、多個 `studentId` 共用同組、搶答中換組被拒、搶答中首次進場被接受、刪組後 GET 回 `valid:false`；以 `npm test` 及 `Invoke-RestMethod` 手動驗證。
 
 ## 4. 靜態頁面提供
 

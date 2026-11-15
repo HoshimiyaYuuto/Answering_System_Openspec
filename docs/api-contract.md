@@ -168,6 +168,8 @@ Request：
 { "studentId": "stu-abc123", "groupId": 2 }
 ```
 
+`groupId` 缺少或不是整數回 `400 INVALID_GROUPS`；選同一組視為重複進場，任一階段回 `200`。
+
 成功回 `200`，包含目前階段與所屬組別：
 
 ```json
