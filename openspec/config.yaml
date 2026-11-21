@@ -1,4 +1,4 @@
-schema: spec-driven
+﻿schema: spec-driven
 
 context: |
   Language: zh-TW
@@ -8,7 +8,7 @@ context: |
   專案：課堂搶答系統（NCU 軟體工程期末專題，OpenSpec 組）。老師匯入 Guided Notes（填空學習單），
   學生以組別為單位在各自裝置上每題搶答，server 收到順序最快者為該題成功答案，結束後匯出寫回
   Guided Notes。系統不判斷答案對錯。
-  需求來源：docs/explore-summary.md（第 0 節為工作規則）。API 契約：docs/api-contract.md。
+  需求來源：docs/explore_summary.md（第 0 節為工作規則）。API 契約：docs/api-contract.md。
   技術：Node.js + Express（REST）+ SSE。狀態存記憶體。前端為 public/student 與 public/teacher 的
   輕量網頁，只用原生 HTML、CSS、JavaScript，不引入重型框架（除非 design 說明理由）。本機運作，可由同網段裝置連線。
   慣例：
@@ -16,7 +16,7 @@ context: |
   - API 回應皆為 JSON。成功為 {"data": ...}，錯誤為 {"error":{"code","message"}}。
   - 時間一律由 server 產生，使用 ISO 8601 UTC。
   - 密碼與金鑰只放 .env，repo 只放不含真值的 .env.example。
-  - 教師端須以 localhost 開啟（階段控制與組別設定目前限 loopback）。
+  - 老師端點（組別設定、匯入、階段控制等）須老師登入，未登入回 401 TEACHER_AUTH_REQUIRED；新增老師端點時沿用 requireTeacher，不再以 loopback 判斷權限。
   - 程式識別字與 capability 名稱用英文。
   - 已存在的能力名稱為 api-contract-and-session-lifecycle 與 groups-and-entry。修改它們時用 MODIFIED，名稱須一字不差。
   - 開發用種子與測試路由只在 NODE_ENV 為 development 時啟用，未設定視為 production。
@@ -25,7 +25,7 @@ context: |
 rules:
   proposal:
     - 只涵蓋指定的一個 change，不得加入範圍外的功能。
-    - 註明對應 docs/explore-summary.md 的哪些章節。
+    - 註明對應 docs/explore_summary.md 的哪些章節。
     - 每個 change 只屬於一位負責人。若功能橫跨學生端與教師端，拆成兩個 change，並在 Impact 註明依賴的另一個 change。
   specs:
     - 每個 Requirement 使用 SHALL，且至少有一個 Scenario。

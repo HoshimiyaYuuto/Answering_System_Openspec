@@ -51,7 +51,7 @@
 - `server/guided-notes-import.js`（新增）：
   - `parseGuidedNotes(buffer)`：純函式，輸入 xlsx 內容，回傳解析結果或丟出帶 `code` 的錯誤，不碰 HTTP 與 session。
   - `createGuidedNotesImport()`：保存「待確認的預覽」與「已確認的匯入結果」（含原始檔 buffer 與每個空格的位置）。
-  - `toGoogleSheetsExportUrl(url)` 與 `fetchGuidedNotesFromLink(url, fetchImpl)`：連結驗證與下載。
+  - `toGoogleSheetsExportUrl(url)` 與 `downloadGuidedNotes(url, { fetchImpl, timeoutMs, maxBytes })`：連結驗證與下載。
 - `server/index.js`：只新增路由，沿用既有的 loopback 檢查與錯誤 envelope。
 
 替代方案是把解析寫在 `index.js` 內；拆出模組可直接對 fixtures 做單元測試，也讓之後的匯出 change 重用空格位置。
@@ -109,7 +109,7 @@
 
 - 預覽回傳 `previewId`、來源、工作表、表頭列、題數、空格數、每題（題號、類型、空格數、前綴）、提醒事項，以及 `replacesExisting`（目前是否已有題目）。
 - server 只保留最新一份預覽；新的預覽會取代舊的，用舊 `previewId` 確認時回 `409 IMPORT_PREVIEW_EXPIRED`。取消只需前端丟棄預覽，server 的題目不受影響。
-- 上傳路由個別掛 `express.raw({ type: 'application/octet-stream', limit: '5mb' })`，不影響全域 16 KiB 的 JSON 上限。
+- 上傳路由個別掛 `express.raw()`，接受 `application/octet-stream` 與 xlsx 的 MIME 類型，上限為 `MAX_GUIDED_NOTES_BYTES`（5 MiB），不影響全域 16 KiB 的 JSON 上限。
 
 替代方案：
 
