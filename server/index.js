@@ -68,7 +68,14 @@ export function createApplication({
   app.use(express.json({ limit: '16kb' }));
   const isDevelopment = environment === 'development';
   const groups = createGroupsEntry({ seed: isDevelopment ? createDevelopmentGroupSeed() : [] });
-  const session = { phase: '準備中', questions: [], groups };
+  const developmentQuestions = isDevelopment ? Array.from({ length: 50 }, (_, index) => {
+    const id = index + 1;
+    const blanks = [10, 20, 30, 40, 50].includes(id)
+      ? [{ index: 0, prefix: '（1）', prompt: `第 ${id} 題第一空` }, { index: 1, prefix: '（2）', prompt: `第 ${id} 題第二空` }]
+      : [{ index: 0, prefix: '', prompt: `第 ${id} 題` }];
+    return { id, prompt: blanks.map(({ prefix, prompt }) => `${prefix}${prompt}`).join(''), blanks };
+  }) : [];
+  const session = { phase: '準備中', questions: developmentQuestions, groups };
   const guidedNotes = createGuidedNotesImport();
   const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
   const eventClients = new Set();
@@ -167,6 +174,28 @@ export function createApplication({
       return response.status(status).json({ error });
     }
     response.json({ data: result.data });
+  });
+
+  app.get('/api/student/questions', (request, response) => {
+    const studentId = request.query.studentId;
+    if (typeof studentId !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(studentId)) {
+      return response.status(400).json({ error: { code: 'INVALID_STUDENT_ID', message: 'studentId 格式無效。' } });
+    }
+    const entry = session.groups.lookup(studentId, session.phase);
+    if (entry.error) {
+      const { status, ...error } = entry.error;
+      return response.status(status).json({ error });
+    }
+    if (!entry.data.valid) {
+      return response.status(403).json({ error: { code: 'STUDENT_NOT_ENTERED', message: '學生沒有有效進場紀錄。' } });
+    }
+    if (session.phase === '準備中') {
+      return response.status(409).json({ error: { code: 'QUESTIONS_NOT_AVAILABLE', message: '搶答開始後才能讀取題目。' } });
+    }
+    return response.json({ data: { questions: session.questions.map(({ id, blanks }) => ({
+      id,
+      blanks: blanks.map(({ index, prefix, prompt }) => ({ index, prefix, prompt })),
+    })) } });
   });
 
   function guidedNotesPhaseGuard(_request, response, next) {
@@ -300,10 +329,6 @@ export function createApplication({
   });
 
   if (isDevelopment) {
-    session.questions = Array.from({ length: 50 }, (_, index) => ({
-      id: index + 1,
-      prompt: `開發測試題目 ${index + 1}`,
-    }));
     app.post('/api/dev/phase/:phase', loopbackOnly, (request, response) => {
       const phases = ['準備中', '搶答中', '已結束'];
       if (!phases.includes(request.params.phase)) {
