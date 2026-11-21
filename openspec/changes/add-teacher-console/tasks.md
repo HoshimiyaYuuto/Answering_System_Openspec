@@ -4,23 +4,23 @@
 
 ## 1. 登入模組
 
-- [ ] 1.1 新增 `server/teacher-auth.js` 與 `server/teacher-auth.test.js`：`createTeacherAuth({ password, now })` 提供 `isConfigured`、`login`、`isValid`、`logout`；密碼以 SHA-256 摘要加 `timingSafeEqual` 比對；同一來源 60 秒內 10 次失敗後回 `TOO_MANY_ATTEMPTS`（design 第 3、4 節）；驗證：`npm test` 涵蓋正確密碼、錯誤密碼、未設定（含空字串）回 `TEACHER_PASSWORD_NOT_SET`、`password` 非字串回 `INVALID_LOGIN_REQUEST`、第 11 次被拒且正確密碼也被拒、其他來源不受影響、以注入的 `now` 前進 60 秒後恢復、登出後 token 失效、不同 `createTeacherAuth()` 之間 token 不通用
+- [x] 1.1 新增 `server/teacher-auth.js` 與 `server/teacher-auth.test.js`：`createTeacherAuth({ password, now })` 提供 `isConfigured`、`login`、`isValid`、`logout`；密碼以 SHA-256 摘要加 `timingSafeEqual` 比對；同一來源 60 秒內 10 次失敗後回 `TOO_MANY_ATTEMPTS`（design 第 3、4 節）；驗證：`npm test` 涵蓋正確密碼、錯誤密碼、未設定（含空字串）回 `TEACHER_PASSWORD_NOT_SET`、`password` 非字串回 `INVALID_LOGIN_REQUEST`、第 11 次被拒且正確密碼也被拒、其他來源不受影響、以注入的 `now` 前進 60 秒後恢復、登出後 token 失效、不同 `createTeacherAuth()` 之間 token 不通用
 
 ## 2. 登入 API 與權限檢查
 
 本組每個 task 只動 `server/index.js` 與一個測試檔（2.5、2.6 例外，見該項）。
 
-- [ ] 2.1 在 `server/index.js` 新增 `teacherPassword`、`now` 選項、cookie 解析、`requireTeacher` 中介層與 `POST /api/teacher/login`、`POST /api/teacher/logout`、`GET /api/teacher/auth`；新增 `server/teacher-auth-api.test.js`；驗證：`npm test` 確認登入成功的 `Set-Cookie` 含 `HttpOnly`、`SameSite=Strict`、`Path=/`，回應內容不含密碼與 token，`/auth` 在未登入、已登入、未設定密碼三種情況的回應正確，登出後 cookie 失效，新建的 app 不接受舊 cookie，429 只影響同一來源
-- [ ] 2.2 `POST /api/session/start`、`/end` 改用 `requireTeacher`，開始時依序檢查階段、組別、題目（`409 NO_GROUPS`、`409 QUESTIONS_REQUIRED`）；更新 `server/events.test.js`；驗證：`npm test` 涵蓋未登入（來源為 127.0.0.1）回 `401 TEACHER_AUTH_REQUIRED` 且沒有發布階段事件、沒有組別、沒有題目、搶答中再開始仍回 `INVALID_PHASE_TRANSITION`、登入且有組別與題目時開始成功並推送事件、development 的 `/api/dev/phase` 仍可用且仍限 loopback
-- [ ] 2.3 組別設定 `PUT /api/groups`、`POST /api/groups/generate` 改用 `requireTeacher`，檢查順序為登入 → 階段 → 內容；更新 `server/groups-entry.test.js`；驗證：`npm test` 涵蓋未登入回 `401`（含附上 `X-Forwarded-For: 127.0.0.1`）、未登入且在搶答中仍回 `401` 而非 `409`、已登入時原有的階段與內容驗證不變、綁在非 loopback 網卡時已登入可以設定（無可用網卡時略過），學生端點不需登入
-- [ ] 2.4 匯入的三個寫入端點與 `GET /api/teacher/guided-notes` 改用 `requireTeacher`，上傳端點的登入檢查放在讀取檔案內容之前；更新 `server/guided-notes-api.test.js`；驗證：`npm test` 涵蓋四個端點未登入回 `401`、已登入在搶答中回 `409 IMPORT_NOT_ALLOWED`、綁在非 loopback 網卡時已登入可以匯入（無可用網卡時略過），原有的匯入測試改為登入後全部通過
-- [ ] 2.5 在 `server/index.js` 直接執行時載入專案根目錄的 `.env`（存在才載入），並在 `.env.example` 加上 `TEACHER_PASSWORD` 的用途說明；驗證：`npm test` 不受本機 `.env` 影響；手動在 `.env` 設定測試用密碼後 `npm start`，執行下列指令，第一個回應 `authenticated` 為 `true`，第二個顯示 `準備中`
+- [x] 2.1 在 `server/index.js` 新增 `teacherPassword`、`now` 選項、cookie 解析、`requireTeacher` 中介層與 `POST /api/teacher/login`、`POST /api/teacher/logout`、`GET /api/teacher/auth`；新增 `server/teacher-auth-api.test.js`；驗證：`npm test` 確認登入成功的 `Set-Cookie` 含 `HttpOnly`、`SameSite=Strict`、`Path=/`，回應內容不含密碼與 token，`/auth` 在未登入、已登入、未設定密碼三種情況的回應正確，登出後 cookie 失效，新建的 app 不接受舊 cookie，429 只影響同一來源
+- [x] 2.2 `POST /api/session/start`、`/end` 改用 `requireTeacher`，開始時依序檢查階段、組別、題目（`409 NO_GROUPS`、`409 QUESTIONS_REQUIRED`）；更新 `server/events.test.js`；驗證：`npm test` 涵蓋未登入（來源為 127.0.0.1）回 `401 TEACHER_AUTH_REQUIRED` 且沒有發布階段事件、沒有組別、沒有題目、搶答中再開始仍回 `INVALID_PHASE_TRANSITION`、登入且有組別與題目時開始成功並推送事件、development 的 `/api/dev/phase` 仍可用且仍限 loopback
+- [x] 2.3 組別設定 `PUT /api/groups`、`POST /api/groups/generate` 改用 `requireTeacher`，檢查順序為登入 → 階段 → 內容；更新 `server/groups-entry.test.js`；驗證：`npm test` 涵蓋未登入回 `401`（含附上 `X-Forwarded-For: 127.0.0.1`）、未登入且在搶答中仍回 `401` 而非 `409`、已登入時原有的階段與內容驗證不變、綁在非 loopback 網卡時已登入可以設定（無可用網卡時略過），學生端點不需登入
+- [x] 2.4 匯入的三個寫入端點與 `GET /api/teacher/guided-notes` 改用 `requireTeacher`，上傳端點的登入檢查放在讀取檔案內容之前；更新 `server/guided-notes-api.test.js`；驗證：`npm test` 涵蓋四個端點未登入回 `401`、已登入在搶答中回 `409 IMPORT_NOT_ALLOWED`、綁在非 loopback 網卡時已登入可以匯入（無可用網卡時略過），原有的匯入測試改為登入後全部通過
+- [x] 2.5 在 `server/index.js` 直接執行時載入專案根目錄的 `.env`（存在才載入），並在 `.env.example` 加上 `TEACHER_PASSWORD` 的用途說明；驗證：`npm test` 不受本機 `.env` 影響；手動在 `.env` 設定測試用密碼後 `npm start`，執行下列指令，第一個回應 `authenticated` 為 `true`，第二個顯示 `準備中`
 
   ```powershell
   Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/login -ContentType 'application/json' -Body '{"password":"<.env 內的密碼>"}' -SessionVariable teacher
   Invoke-RestMethod http://localhost:3000/api/session -WebSession $teacher
   ```
-- [ ] 2.6 更新 `docs/api-contract.md`（design 第 9 節）：新增「老師登入」一節，改寫「階段控制」「組別設定」「Guided Notes 匯入」的權限說明與 PowerShell 範例，補上新錯誤代碼；驗證：依文件的 PowerShell 範例操作，未登入呼叫 `/api/session/start` 得到 `401 TEACHER_AUTH_REQUIRED`，登入後沒有組別得到 `409 NO_GROUPS`，回應與文件一致
+- [x] 2.6 更新 `docs/api-contract.md`（design 第 9 節）：新增「老師登入」一節，改寫「階段控制」「組別設定」「Guided Notes 匯入」的權限說明與 PowerShell 範例，補上新錯誤代碼；驗證：依文件的 PowerShell 範例操作，未登入呼叫 `/api/session/start` 得到 `401 TEACHER_AUTH_REQUIRED`，登入後沒有組別得到 `409 NO_GROUPS`，回應與文件一致
 
 ## 3. 教師控制台頁面
 

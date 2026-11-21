@@ -1,4 +1,5 @@
 import express from 'express';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createDevelopmentGroupSeed, createGroupsEntry, InvalidGroupsError } from './groups-entry.js';
@@ -9,6 +10,20 @@ import {
   MAX_GUIDED_NOTES_BYTES,
   parseGuidedNotes,
 } from './guided-notes-import.js';
+import { createTeacherAuth, TeacherAuthError } from './teacher-auth.js';
+
+const TEACHER_COOKIE = 'teacher_session';
+
+function readCookie(request, name) {
+  const header = request.get('Cookie');
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator === -1) continue;
+    if (part.slice(0, separator).trim() === name) return part.slice(separator + 1).trim();
+  }
+  return undefined;
+}
 
 function isLoopback(address = '') {
   const normalized = address.toLowerCase().replace(/^::ffff:/, '');
@@ -38,6 +53,8 @@ export function createApplication({
   environment = process.env.NODE_ENV,
   exposeTestErrorRoute = false,
   downloadGuidedNotesImpl = downloadGuidedNotes,
+  teacherPassword = process.env.TEACHER_PASSWORD,
+  now,
 } = {}) {
   const app = express();
   const publicRoot = resolve('public');
@@ -53,7 +70,44 @@ export function createApplication({
   const groups = createGroupsEntry({ seed: isDevelopment ? createDevelopmentGroupSeed() : [] });
   const session = { phase: '準備中', questions: [], groups };
   const guidedNotes = createGuidedNotesImport();
+  const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
   const eventClients = new Set();
+
+  function isTeacher(request) {
+    return teacherAuth.isValid(readCookie(request, TEACHER_COOKIE));
+  }
+
+  function requireTeacher(request, response, next) {
+    if (!isTeacher(request)) {
+      return response.status(401).json({
+        error: { code: 'TEACHER_AUTH_REQUIRED', message: '請先以老師密碼登入。' },
+      });
+    }
+    next();
+  }
+
+  app.get('/api/teacher/auth', (request, response) => {
+    response.json({
+      data: { authenticated: isTeacher(request), passwordConfigured: teacherAuth.isConfigured() },
+    });
+  });
+
+  app.post('/api/teacher/login', (request, response) => {
+    try {
+      const { token } = teacherAuth.login(request.body?.password, request.socket.remoteAddress);
+      response.set('Set-Cookie', `${TEACHER_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/`);
+      return response.json({ data: { authenticated: true } });
+    } catch (error) {
+      if (!(error instanceof TeacherAuthError)) throw error;
+      return response.status(error.status).json({ error: { code: error.code, message: error.message } });
+    }
+  });
+
+  app.post('/api/teacher/logout', (request, response) => {
+    teacherAuth.logout(readCookie(request, TEACHER_COOKIE));
+    response.set('Set-Cookie', `${TEACHER_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+    response.json({ data: { authenticated: false } });
+  });
 
   function sessionSummary() {
     return {
@@ -78,11 +132,6 @@ export function createApplication({
   });
 
   function configureGroups(request, response, operation) {
-    if (!isLoopback(request.socket.remoteAddress)) {
-      return response.status(403).json({
-        error: { code: 'LOOPBACK_ONLY', message: '此操作僅允許本機呼叫。' },
-      });
-    }
     if (session.phase !== '準備中') {
       return response.status(409).json({
         error: { code: 'GROUP_CONFIG_NOT_ALLOWED', message: '僅能在準備中設定組別。' },
@@ -99,8 +148,8 @@ export function createApplication({
     }
   }
 
-  app.put('/api/groups', (request, response) => configureGroups(request, response, () => session.groups.replace(request.body?.groups)));
-  app.post('/api/groups/generate', (request, response) => configureGroups(request, response, () => session.groups.generate(request.body?.count)));
+  app.put('/api/groups', requireTeacher, (request, response) => configureGroups(request, response, () => session.groups.replace(request.body?.groups)));
+  app.post('/api/groups/generate', requireTeacher, (request, response) => configureGroups(request, response, () => session.groups.generate(request.body?.count)));
 
   app.put('/api/student/entry', (request, response) => {
     const result = session.groups.enter(request.body?.studentId, request.body?.groupId, session.phase);
@@ -120,12 +169,7 @@ export function createApplication({
     response.json({ data: result.data });
   });
 
-  function guidedNotesWriteGuard(request, response, next) {
-    if (!isLoopback(request.socket.remoteAddress)) {
-      return response.status(403).json({
-        error: { code: 'LOOPBACK_ONLY', message: '此操作僅允許本機呼叫。' },
-      });
-    }
+  function guidedNotesPhaseGuard(_request, response, next) {
     if (session.phase !== '準備中') {
       return response.status(409).json({
         error: { code: 'IMPORT_NOT_ALLOWED', message: '只能在準備中匯入學習單。' },
@@ -161,7 +205,8 @@ export function createApplication({
 
   app.post(
     '/api/teacher/guided-notes/preview/file',
-    guidedNotesWriteGuard,
+    requireTeacher,
+    guidedNotesPhaseGuard,
     rawWorkbook,
     (request, response) => {
       const fileBuffer = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
@@ -175,7 +220,7 @@ export function createApplication({
     },
   );
 
-  app.post('/api/teacher/guided-notes/preview/link', guidedNotesWriteGuard, async (request, response) => {
+  app.post('/api/teacher/guided-notes/preview/link', requireTeacher, guidedNotesPhaseGuard, async (request, response) => {
     let download;
     try {
       download = await downloadGuidedNotesImpl(request.body?.url);
@@ -185,7 +230,7 @@ export function createApplication({
     return createImportPreview(response, download.buffer, { type: 'link', name: download.name });
   });
 
-  app.post('/api/teacher/guided-notes/confirm', guidedNotesWriteGuard, (request, response) => {
+  app.post('/api/teacher/guided-notes/confirm', requireTeacher, guidedNotesPhaseGuard, (request, response) => {
     try {
       const { questions, summary } = guidedNotes.confirm(request.body?.previewId);
       session.questions = questions;
@@ -195,7 +240,7 @@ export function createApplication({
     }
   });
 
-  app.get('/api/teacher/guided-notes', loopbackOnly, (_request, response) => {
+  app.get('/api/teacher/guided-notes', requireTeacher, (_request, response) => {
     response.json({ data: { current: guidedNotes.currentSummary() } });
   });
 
@@ -226,18 +271,24 @@ export function createApplication({
     });
   });
 
-  app.post('/api/session/start', loopbackOnly, (_request, response) => {
+  app.post('/api/session/start', requireTeacher, (_request, response) => {
     if (session.phase !== '準備中') {
       return response.status(409).json({
         error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能開啟搶答。' },
       });
+    }
+    if (session.groups.count() === 0) {
+      return response.status(409).json({ error: { code: 'NO_GROUPS', message: '請先設定組別。' } });
+    }
+    if (session.questions.length === 0) {
+      return response.status(409).json({ error: { code: 'QUESTIONS_REQUIRED', message: '請先匯入學習單。' } });
     }
     session.phase = '搶答中';
     publishPhase();
     response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
   });
 
-  app.post('/api/session/end', loopbackOnly, (_request, response) => {
+  app.post('/api/session/end', requireTeacher, (_request, response) => {
     if (session.phase !== '搶答中') {
       return response.status(409).json({
         error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能結束搶答。' },
@@ -292,6 +343,7 @@ export function createApplication({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  if (existsSync('.env')) process.loadEnvFile('.env');
   const port = Number(process.env.PORT || 3000);
   const host = process.env.HOST || '0.0.0.0';
   createApplication().listen(port, host, () => {
