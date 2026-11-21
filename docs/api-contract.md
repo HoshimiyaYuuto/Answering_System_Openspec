@@ -1,6 +1,12 @@
 # API 契約
 
-本文件定義第一階段 server API。所有時間均由 server 產生，使用 ISO 8601 UTC 字串。
+本文件定義 server API，是學生端、教師端與 server 共用的唯一契約。所有 API 時間均由 server 產生，使用 ISO 8601 UTC 字串（匯出 csv 的送出時間另依共同契約 D13 以本地時間呈現，見 `csv-export` change）。
+
+## 契約狀態與已知限制
+
+- 本文件只記錄已實作的端點；尚未實作的功能（送出、結果、作廢、匯出等）在各自的 change 中新增。
+- 活動狀態存在 server 記憶體；server 重啟後組別、進場紀錄、已匯入的題目與老師登入狀態全部清空。
+- 老師身分驗證（共同契約 D18）以 `TEACHER_PASSWORD` 密碼登入實作（見「老師登入」），已取代原本的 loopback 限制；loopback 只剩開發路由 `/api/dev/phase/:phase` 使用。新增的老師端點一律使用同一個登入檢查。
 
 ## 通用格式
 
@@ -106,7 +112,7 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSessi
 
 要求 body 為空，僅允許 `搶答中` 轉為 `已結束`。成功回 `200`，並回傳更新後的 `phase` 與 `serverTime`。不允許的階段轉移回 `409`。
 
-本契約不定義活動重設；未來加入重設時須以 MODIFIED 更新階段生命週期要求。
+本契約目前不定義活動重設（共同契約 D19，已結束後可重設回準備中、組別保留、作答清空）；加入時須以 MODIFIED 更新階段生命週期要求。
 
 ## 階段事件
 
@@ -303,9 +309,9 @@ Request：
 
 本節端點供教師端匯入 Guided Notes（填空學習單）。匯入分兩步：先取得摘要（預覽），老師確認後題目才生效並取代 `session.questions`；`GET /api/session` 的 `questionCount` 隨之更新。
 
-本節四個端點都需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`。寫入端點（兩個預覽與確認）的檢查順序為登入、階段、請求內容：非 `準備中` 回 `409 IMPORT_NOT_ALLOWED`。上傳端點在讀取檔案內容之前就先檢查登入。
+本節四個端點都需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`，與其他老師端點共用同一個登入檢查（`requireTeacher`）。寫入端點（兩個預覽與確認）的檢查順序為登入、階段、請求內容：非 `準備中` 回 `409 IMPORT_NOT_ALLOWED`。上傳端點在讀取檔案內容之前就先檢查登入。
 
-辨識規則：在任一工作表中尋找同一列內容為「題號」「題目」「作答」的表頭列；表頭以下題號欄為正整數的列為一題；題號儲存格向下合併多列時為題組，每一列一個空格。不依賴固定儲存格位置。每個空格在原檔中的位置只保存在 server，不出現在任何 API 回應中。
+辨識規則：在任一工作表中尋找同一列內容為「題號」「題目」「作答」的表頭列；表頭以下題號欄為正整數的列為一題；題號儲存格向下合併多列時為題組，每一列一個空格。不依賴固定儲存格位置。每個空格在原檔中的位置只保存在 server，不出現在任何 API 回應中。匯入後的位置只作為預設參考：以 Google 試算表連結匯入時，server 另保存試算表 ID 與工作表，寫回線上試算表（共同契約 D12）前須重新讀取並依同一規則重新定位，不得只依匯入當時的儲存格位置寫入。這些內部資訊同樣不出現在 API 回應中。
 
 ### `POST /api/teacher/guided-notes/preview/file`
 
@@ -336,7 +342,7 @@ Request：
 }
 ```
 
-- `id` 為學習單上的題號，不重新編號。
+- `id` 為學習單上的題號，不重新編號（可能不連續）。送出、結果與匯出一律以此 `id` 作為題號。
 - `type` 為 `single`（單題）或 `group`（題組）。
 - `warnings` 為提醒文字陣列，例如作答格已有非前綴內容。
 - `replacesExisting` 為 `true` 時，表示目前已有題目，確認後會被取代。
@@ -418,3 +424,7 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/pr
 Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/confirm -ContentType 'application/json' -Body '{"previewId":"<上一步回傳的 previewId>"}' -WebSession $teacher
 Invoke-RestMethod http://localhost:3000/api/teacher/guided-notes -WebSession $teacher
 ```
+
+## 待補的公開題目格式
+
+`session.questions` 已由匯入寫入，但目前沒有端點讓學生端讀取題目。`add-buzz-in-submission` 須新增學生端讀取題目的端點並在此定義回應格式；格式不得包含儲存格位置、原始檔內容或試算表 ID。匯入模組目前提出的公開形狀為 `{ id, prompt, blanks: [{ index, prefix, prompt }] }`，由該 change 確認後才成為契約。

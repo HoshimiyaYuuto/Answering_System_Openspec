@@ -132,6 +132,10 @@ server SHALL 提供目前組別清單；`GET /api/session` 的 `groupCount` SHAL
 - **WHEN** 教師在 localhost 使用臨時頁面提交合法組別設定
 - **THEN** 頁面顯示設定成功且 server 的組別清單與摘要數量更新
 
+#### Scenario: No quiz management on temporary page
+- **WHEN** 教師開啟臨時組別設定頁
+- **THEN** 頁面不提供作答、送出、監看或正式教師控制功能
+
 #### Scenario: Import Guided Notes from localhost
 - **WHEN** 教師在 localhost 使用臨時頁面匯入合法的 Guided Notes 並確認摘要
 - **THEN** 頁面顯示已匯入的工作表與題數，且 server 的活動摘要題數更新
@@ -139,7 +143,3 @@ server SHALL 提供目前組別清單；`GET /api/session` 的 `groupCount` SHAL
 #### Scenario: Import controls disabled outside preparation
 - **WHEN** 活動不是「準備中」時開啟臨時頁面
 - **THEN** 匯入操作被停用，並說明只能在準備中匯入
-
-#### Scenario: No quiz management on temporary page
-- **WHEN** 教師開啟臨時組別設定頁
-- **THEN** 頁面不提供作答、送出、監看或正式教師控制功能

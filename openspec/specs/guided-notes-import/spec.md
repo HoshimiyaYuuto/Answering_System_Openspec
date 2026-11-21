@@ -1,6 +1,7 @@
 # guided-notes-import Specification
 
 ## Purpose
+
 讓老師提供填空學習單（Guided Notes）後，系統依表頭與合併範圍動態辨識題目、題組與空格，經老師確認後成為本次活動的題目，並保存之後匯出寫回所需的原始檔與空格位置。
 
 ## Requirements

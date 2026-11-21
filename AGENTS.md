@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## 專案規則
-- 需求依據：`docs/explore-summary.md`；每次只處理指定的 OpenSpec change 與 tasks，不做範圍外的事。
+- 需求依據：`docs/explore_summary.md`；每次只處理指定的 OpenSpec change 與 tasks，不做範圍外的事。
 - 實作與契約不一致時先停下回報，不要自行修改契約或 spec。
 - 不得在任何檔案、log 或 commit 寫入真實密碼、金鑰或機敏資料；密碼只放 `.env`，repo 只放 `.env.example`。
 - 每個 task 驗證通過才在 `tasks.md` 打勾。
