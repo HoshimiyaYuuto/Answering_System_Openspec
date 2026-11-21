@@ -60,7 +60,7 @@ Set-Cookie: teacher_session=<token>; HttpOnly; SameSite=Strict; Path=/
   - `isConfigured()`、`login(password, source)` 回傳 `{ token }` 或帶 `code` 與 `status` 的錯誤、`isValid(token)`、`logout(token)`。
   - `now` 可注入，測試不必真的等 60 秒。
 - `server/index.js`：
-  - `readTeacherToken(request)` 解析 cookie；`requireTeacher` 中介層。
+  - `readCookie(request, name)` 解析 `Cookie` 標頭並取出 `teacher_session`；`requireTeacher` 中介層。
   - 新增 `/api/teacher/login`、`/logout`、`/auth` 三個路由。
   - `createApplication()` 新增選項 `teacherPassword`（預設 `process.env.TEACHER_PASSWORD`）與 `now`，測試可直接傳入。
 
@@ -143,6 +143,7 @@ Set-Cookie: teacher_session=<token>; HttpOnly; SameSite=Strict; Path=/
 | 事件 | 結果 |
 | --- | --- |
 | `GET /api/session` 回應、SSE `phase` 事件 | 更新 `summary`；收到 `phase` 後重新讀一次摘要，取得最新組數與題數 |
+| SSE 連上或重新連上（`open` 事件，例如 server 重新啟動） | 在控制台畫面時重新讀取摘要與匯入狀態；server 重啟後登入已失效，匯入狀態回 `401`，畫面回到登入。已結束時除了登出以外的按鈕都停用，老師沒有操作能觸發 `401`，所以由重新連線主動檢查 |
 | 按「開始搶答」 | `starting`，按鈕停用；成功後更新階段；`409` 顯示訊息 |
 | 按「結束搶答」 | 顯示「確定結束？」與「確認」「取消」；確認後 `ending` |
 | 結束回 `409 INVALID_PHASE_TRANSITION` | 重新讀摘要；若已是「已結束」則視為成功、不顯示錯誤（兩個分頁同時結束） |
