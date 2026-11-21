@@ -522,7 +522,13 @@ data: {"questionId":1,"answers":["H2O"],"submittedAt":"2026-11-14T00:00:00.000Z"
 ```powershell
 Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/login -ContentType 'application/json' -Body '{"password":"<老師密碼>"}' -SessionVariable teacher
 Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSession $teacher
+Invoke-RestMethod -Method Put http://localhost:3000/api/student/entry -ContentType 'application/json' -Body '{"studentId":"stu-aaaa1111","groupId":1}'
 Invoke-RestMethod "http://localhost:3000/api/student/questions?studentId=stu-aaaa1111"
 Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -ContentType 'application/json' -Body '{"studentId":"stu-aaaa1111","questionId":1,"answers":["H2O"]}'
 Invoke-RestMethod "http://localhost:3000/api/student/submissions?studentId=stu-aaaa1111"
 ```
+
+## 待補的作答紀錄格式
+
+server 內部的作答紀錄與每題判定結果（含作廢、公平順位與老師改選）的格式約定見 [作答紀錄與判定結果](submission-record.md)。送出、結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點。
+
