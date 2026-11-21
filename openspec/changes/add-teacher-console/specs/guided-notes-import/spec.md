@@ -13,6 +13,6 @@
 - **WHEN** 未登入的請求要求匯入、確認或查詢匯入摘要，即使來源是 loopback
 - **THEN** 系統回傳 `401 TEACHER_AUTH_REQUIRED`，活動題目不變
 
-#### Scenario: Import from a LAN device
-- **WHEN** 已登入老師從區網位址在「準備中」上傳合法學習單並確認
-- **THEN** 活動題目更新為匯入結果
+#### Scenario: Reject import from a non-loopback source
+- **WHEN** 非 loopback 來源要求匯入
+- **THEN** 系統依老師登入判斷權限：未登入回傳 `401 TEACHER_AUTH_REQUIRED` 且題目不變；已登入老師在「準備中」上傳合法學習單並確認時，活動題目更新為匯入結果
