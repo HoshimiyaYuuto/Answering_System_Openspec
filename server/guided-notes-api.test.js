@@ -9,22 +9,40 @@ const fixtureDirectory = new URL('../fixtures/guided-notes/', import.meta.url);
 const fixture = (name) => readFile(new URL(name, fixtureDirectory));
 const sheetLink = 'https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit';
 
+const TEST_PASSWORD = 'test-password';
+const teacherCookies = new Map();
+
 async function startApp(options = {}, host = '127.0.0.1') {
-  const server = createApplication({ environment: 'production', ...options }).listen(0, host);
+  const server = createApplication({ environment: 'production', teacherPassword: TEST_PASSWORD, ...options }).listen(0, host);
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
   });
-  return { server, url: `http://127.0.0.1:${server.address().port}` };
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${url}/api/teacher/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: TEST_PASSWORD }),
+  });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  teacherCookies.set(url, cookie);
+  return { server, url, cookie };
 }
 
 function close(server) {
   return new Promise((resolve) => server.close(resolve));
 }
 
-async function call(url, path, options = {}) {
-  const response = await fetch(`${url}${path}`, options);
+async function call(url, path, { anonymous = false, ...options } = {}) {
+  const cookie = anonymous ? undefined : teacherCookies.get(url);
+  const headers = { ...(options.headers ?? {}), ...(cookie ? { Cookie: cookie } : {}) };
+  const response = await fetch(`${url}${path}`, { ...options, headers });
   return { status: response.status, body: await response.json() };
+}
+
+async function importAndConfirm(url, name = '01-official-single.xlsx') {
+  const preview = await uploadFile(url, await fixture(name));
+  return postJson(url, '/api/teacher/guided-notes/confirm', { previewId: preview.body.data.previewId });
 }
 
 function uploadFile(url, buffer, name = 'sheet.xlsx', baseUrl = url) {
@@ -113,7 +131,8 @@ test('import is rejected outside preparation', async () => {
   const { server, url } = await startApp();
   try {
     await postJson(url, '/api/groups/generate', { count: 2 });
-    await call(url, '/api/session/start', { method: 'POST' });
+    await importAndConfirm(url);
+    assert.equal((await call(url, '/api/session/start', { method: 'POST' })).status, 200);
     const { status, body } = await uploadFile(url, await fixture('01-official-single.xlsx'));
     assert.equal(status, 409);
     assert.equal(body.error.code, 'IMPORT_NOT_ALLOWED');
@@ -122,22 +141,66 @@ test('import is rejected outside preparation', async () => {
   }
 });
 
-test('non-loopback import is rejected even with a forged forwarded header', async (t) => {
+test('every import endpoint requires teacher login, even from loopback with a forged header', async () => {
+  const { server, url } = await startApp();
+  try {
+    const anonymous = { anonymous: true };
+    const requests = [
+      call(url, '/api/teacher/guided-notes/preview/file', {
+        ...anonymous,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'x-forwarded-for': '127.0.0.1' },
+        body: await fixture('01-official-single.xlsx'),
+      }),
+      call(url, '/api/teacher/guided-notes/preview/link', {
+        ...anonymous, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: sheetLink }),
+      }),
+      call(url, '/api/teacher/guided-notes/confirm', {
+        ...anonymous, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ previewId: 'x' }),
+      }),
+      call(url, '/api/teacher/guided-notes', anonymous),
+    ];
+    for (const { status, body } of await Promise.all(requests)) {
+      assert.equal(status, 401);
+      assert.deepEqual(body, { error: { code: 'TEACHER_AUTH_REQUIRED', message: '請先以老師密碼登入。' } });
+    }
+    assert.equal(await questionCount(url), 0);
+  } finally {
+    await close(server);
+  }
+});
+
+test('upload without login is rejected before the body size limit is applied', async () => {
+  const { server, url } = await startApp();
+  try {
+    const { status, body } = await call(url, '/api/teacher/guided-notes/preview/file', {
+      anonymous: true,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: Buffer.alloc(5 * 1024 * 1024 + 1, 1),
+    });
+    assert.equal(status, 401);
+    assert.equal(body.error.code, 'TEACHER_AUTH_REQUIRED');
+  } finally {
+    await close(server);
+  }
+});
+
+test('a logged-in teacher can import from a non-loopback address', async (t) => {
   const externalAddress = findExternalIPv4();
   if (!externalAddress) {
     t.skip('沒有可用的非 loopback IPv4 網卡，略過此測試');
     return;
   }
-  const { server } = await startApp({}, '0.0.0.0');
+  const { server, cookie } = await startApp({}, '0.0.0.0');
   try {
-    const { port } = server.address();
-    const response = await fetch(`http://${externalAddress}:${port}/api/teacher/guided-notes/preview/file`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream', 'x-forwarded-for': '127.0.0.1' },
-      body: await fixture('01-official-single.xlsx'),
-    });
-    assert.equal(response.status, 403);
-    assert.equal((await response.json()).error.code, 'LOOPBACK_ONLY');
+    const lanUrl = `http://${externalAddress}:${server.address().port}`;
+    teacherCookies.set(lanUrl, cookie);
+    const preview = await uploadFile(lanUrl, await fixture('01-official-single.xlsx'));
+    assert.equal(preview.status, 200);
+    const confirmed = await postJson(lanUrl, '/api/teacher/guided-notes/confirm', { previewId: preview.body.data.previewId });
+    assert.equal(confirmed.status, 200);
+    assert.equal(await questionCount(lanUrl), 6);
   } finally {
     await close(server);
   }
@@ -241,12 +304,14 @@ test('failed imports keep existing questions', async () => {
 test('confirm is rejected outside preparation', async () => {
   const { server, url } = await startApp();
   try {
-    const preview = await uploadFile(url, await fixture('01-official-single.xlsx'));
-    await call(url, '/api/session/start', { method: 'POST' });
+    await postJson(url, '/api/groups/generate', { count: 2 });
+    await importAndConfirm(url);
+    const preview = await uploadFile(url, await fixture('02-official-group.xlsx'));
+    assert.equal((await call(url, '/api/session/start', { method: 'POST' })).status, 200);
     const { status, body } = await postJson(url, '/api/teacher/guided-notes/confirm', { previewId: preview.body.data.previewId });
     assert.equal(status, 409);
     assert.equal(body.error.code, 'IMPORT_NOT_ALLOWED');
-    assert.equal(await questionCount(url), 0);
+    assert.equal(await questionCount(url), 6);
   } finally {
     await close(server);
   }

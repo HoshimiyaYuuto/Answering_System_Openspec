@@ -46,23 +46,32 @@ test('group storage validates count limits, unique ids, and trimmed unique names
   ]);
 });
 
+const TEST_PASSWORD = 'test-password';
+
 async function startApp(environment = 'test', host = '127.0.0.1') {
-  const server = createApplication({ environment }).listen(0, host);
+  const server = createApplication({ environment, teacherPassword: TEST_PASSWORD }).listen(0, host);
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
   });
-  return { server, url: `http://${host}:${server.address().port}` };
+  const loginHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+  const login = await fetch(`http://${loginHost}:${server.address().port}/api/teacher/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: TEST_PASSWORD }),
+  });
+  const teacher = login.headers.get('set-cookie').split(';')[0];
+  return { server, url: `http://${host}:${server.address().port}`, teacher };
 }
 
-test('group API honors socket loopback, phase-before-content validation, and forwarded header spoofing', async () => {
-  const { server, url } = await startApp('development');
+const asTeacher = (teacher) => ({ 'content-type': 'application/json', cookie: teacher });
+
+test('group API checks teacher login, then phase, then content', async () => {
+  const { server, url, teacher } = await startApp('development');
   try {
     const seeded = await fetch(`${url}/api/groups`).then((response) => response.json());
     assert.equal(seeded.data.groups.length, 100);
 
     const replaced = await fetch(`${url}/api/groups`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
+      method: 'PUT', headers: asTeacher(teacher),
       body: JSON.stringify({ groups: [{ id: 9, name: '新組' }] }),
     });
     assert.equal(replaced.status, 200);
@@ -71,7 +80,7 @@ test('group API honors socket loopback, phase-before-content validation, and for
     assert.equal(summary.data.groupCount, 1);
 
     const malformed = await fetch(`${url}/api/groups`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ groups: [] }),
+      method: 'PUT', headers: asTeacher(teacher), body: JSON.stringify({ groups: [] }),
     });
     assert.equal(malformed.status, 400);
     assert.equal((await malformed.json()).error.code, 'INVALID_GROUPS');
@@ -79,21 +88,27 @@ test('group API honors socket loopback, phase-before-content validation, and for
     const phase = await fetch(`${url}/api/dev/phase/%E6%90%B6%E7%AD%94%E4%B8%AD`, { method: 'POST' });
     assert.equal(phase.status, 200);
     const rejected = await fetch(`${url}/api/groups`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ groups: [] }),
+      method: 'PUT', headers: asTeacher(teacher), body: JSON.stringify({ groups: [] }),
     });
     assert.equal(rejected.status, 409);
     assert.equal((await rejected.json()).error.code, 'GROUP_CONFIG_NOT_ALLOWED');
+
+    const anonymousDuringBuzzer = await fetch(`${url}/api/groups`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ groups: [] }),
+    });
+    assert.equal(anonymousDuringBuzzer.status, 401);
+    assert.equal((await anonymousDuringBuzzer.json()).error.code, 'TEACHER_AUTH_REQUIRED');
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
 });
 
 test('production group storage starts empty; generated groups are returned through the API', async () => {
-  const { server, url } = await startApp('production');
+  const { server, url, teacher } = await startApp('production');
   try {
     assert.deepEqual((await fetch(`${url}/api/groups`).then((response) => response.json())).data.groups, []);
     const response = await fetch(`${url}/api/groups/generate`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ count: 2 }),
+      method: 'POST', headers: asTeacher(teacher), body: JSON.stringify({ count: 2 }),
     });
     assert.equal(response.status, 200);
     assert.deepEqual((await response.json()).data.groups, [
@@ -105,7 +120,7 @@ test('production group storage starts empty; generated groups are returned throu
 });
 
 test('group and session API responses disable caching', async () => {
-  const { server, url } = await startApp('production');
+  const { server, url, teacher } = await startApp('production');
   try {
     for (const path of ['/api/groups', '/api/session']) {
       const response = await fetch(`${url}${path}`);
@@ -126,37 +141,53 @@ function findExternalIPv4() {
   return null;
 }
 
-test('non-loopback socket is rejected even with a forged forwarded header', async (t) => {
+test('group configuration without login is rejected from loopback, even with a forged forwarded header', async () => {
+  const { server, url } = await startApp('production');
+  try {
+    for (const headers of [{}, { 'x-forwarded-for': '127.0.0.1' }]) {
+      const response = await fetch(`${url}/api/groups/generate`, {
+        method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ count: 3 }),
+      });
+      assert.equal(response.status, 401);
+      assert.deepEqual(await response.json(), {
+        error: { code: 'TEACHER_AUTH_REQUIRED', message: '請先以老師密碼登入。' },
+      });
+    }
+    assert.equal((await fetch(`${url}/api/session`).then((response) => response.json())).data.groupCount, 0);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('a logged-in teacher can configure groups from a non-loopback address', async (t) => {
   const externalAddress = findExternalIPv4();
   if (!externalAddress) {
     t.skip('沒有可用的非 loopback IPv4 網卡，略過此測試');
     return;
   }
-  const { server } = await startApp('production', '0.0.0.0');
+  const { server, teacher } = await startApp('production', '0.0.0.0');
   try {
     const { port } = server.address();
-    const request = (host, headers = {}) => fetch(`http://${host}:${port}/api/groups/generate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify({ count: 3 }),
+    const request = (headers) => fetch(`http://${externalAddress}:${port}/api/groups/generate`, {
+      method: 'POST', headers, body: JSON.stringify({ count: 3 }),
     });
 
-    const forged = await request(externalAddress, { 'x-forwarded-for': '127.0.0.1' });
-    assert.equal(forged.status, 403);
-    assert.equal((await forged.json()).error.code, 'LOOPBACK_ONLY');
+    const anonymous = await request({ 'content-type': 'application/json' });
+    assert.equal(anonymous.status, 401);
 
-    const local = await request('127.0.0.1');
-    assert.equal(local.status, 200);
+    const loggedIn = await request(asTeacher(teacher));
+    assert.equal(loggedIn.status, 200);
+    assert.equal((await loggedIn.json()).data.groups.length, 3);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
 });
 
 test('student entry supports anonymous first entry, shared groups, and restoration', async () => {
-  const { server, url } = await startApp('production');
+  const { server, url, teacher } = await startApp('production');
   try {
     await fetch(`${url}/api/groups/generate`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ count: 2 }),
+      method: 'POST', headers: asTeacher(teacher), body: JSON.stringify({ count: 2 }),
     });
     const enter = (studentId, groupId) => fetch(`${url}/api/student/entry`, {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ studentId, groupId }),
@@ -175,7 +206,7 @@ test('student entry supports anonymous first entry, shared groups, and restorati
 });
 
 test('student entry validates ids and group existence, and allows first entry during buzzer phase', async () => {
-  const { server, url } = await startApp('development');
+  const { server, url, teacher } = await startApp('development');
   try {
     const put = (studentId, groupId) => fetch(`${url}/api/student/entry`, {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ studentId, groupId }),
@@ -192,7 +223,7 @@ test('student entry validates ids and group existence, and allows first entry du
 });
 
 test('during buzzer phase changing groups is rejected but repeating the same group succeeds', async () => {
-  const { server, url } = await startApp('development');
+  const { server, url, teacher } = await startApp('development');
   try {
     const put = (groupId) => fetch(`${url}/api/student/entry`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
@@ -210,10 +241,10 @@ test('during buzzer phase changing groups is rejected but repeating the same gro
 });
 
 test('removed group invalidates entries permanently until the student enters again', async () => {
-  const { server, url } = await startApp('production');
+  const { server, url, teacher } = await startApp('production');
   try {
     const putGroups = (groups) => fetch(`${url}/api/groups`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ groups }),
+      method: 'PUT', headers: asTeacher(teacher), body: JSON.stringify({ groups }),
     });
     const enter = () => fetch(`${url}/api/student/entry`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
@@ -235,7 +266,7 @@ test('removed group invalidates entries permanently until the student enters aga
 });
 
 test('unknown student entry lookup returns entry_reset', async () => {
-  const { server, url } = await startApp('production');
+  const { server, url, teacher } = await startApp('production');
   try {
     const response = await fetch(`${url}/api/student/entry?studentId=student-unknown`);
     assert.equal(response.status, 200);
@@ -248,7 +279,7 @@ test('unknown student entry lookup returns entry_reset', async () => {
 });
 
 test('student and teacher static entry points serve HTML and root redirects to student', async () => {
-  const { server, url } = await startApp('production');
+  const { server, url, teacher } = await startApp('production');
   try {
     const student = await fetch(`${url}/student/`);
     assert.equal(student.status, 200);

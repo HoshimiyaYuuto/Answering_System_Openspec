@@ -7,7 +7,7 @@
 ## Requirements
 
 ### Requirement: Server serves the student and teacher static areas
-server SHALL 提供 `public/student/` 與 `public/teacher/` 的靜態頁面；學生入口 SHALL 可由 `/student/` 開啟，臨時組別設定入口 SHALL 可由 `/teacher/` 開啟。
+server SHALL 提供 `public/student/` 與 `public/teacher/` 的靜態頁面；學生入口 SHALL 可由 `/student/` 開啟，教師控制台 SHALL 可由 `/teacher/` 開啟，且不限 localhost。
 
 #### Scenario: Root redirects to student page
 - **WHEN** 使用者開啟根路徑 `/`
@@ -18,8 +18,8 @@ server SHALL 提供 `public/student/` 與 `public/teacher/` 的靜態頁面；�
 - **THEN** server 提供學生端進場頁面
 
 #### Scenario: Open temporary teacher group page
-- **WHEN** 使用者從 localhost 開啟 `/teacher/`
-- **THEN** server 提供僅供本 change 使用的最小組別設定頁
+- **WHEN** 使用者從 localhost 或區網位址開啟 `/teacher/`
+- **THEN** server 提供教師控制台頁面，原本的臨時組別設定頁已由控制台取代
 
 ### Requirement: Group list is readable and reflects configured groups
 server SHALL 提供目前組別清單；`GET /api/session` 的 `groupCount` SHALL 等於目前實際組別數。
@@ -32,16 +32,20 @@ server SHALL 提供目前組別清單；`GET /api/session` 的 `groupCount` SHAL
 - **WHEN** 組別數已設定或變更後查詢活動摘要
 - **THEN** `groupCount` 等於清單中的實際組別數
 
-### Requirement: Group configuration is limited to loopback during preparation
-組別設定操作 SHALL 僅在活動為「準備中」且請求來源為 loopback 時接受；server SHALL 不信任 forwarded headers 判定來源。
+### Requirement: Group configuration is limited to the teacher during preparation
+組別設定操作 SHALL 僅在活動為「準備中」且請求來自已登入老師時接受；server SHALL 先檢查登入，再檢查階段，最後檢查請求內容。請求來源是否為 loopback 或帶有任何轉發標頭 SHALL NOT 影響判斷。
 
 #### Scenario: Reject group configuration during buzzer phase
-- **WHEN** 「搶答中」或「已結束」時提出組別設定
+- **WHEN** 已登入老師在「搶答中」或「已結束」時提出組別設定
 - **THEN** server 拒絕操作並回傳契約格式 JSON 錯誤
 
+#### Scenario: Reject group configuration without teacher login
+- **WHEN** 未登入的請求提出組別設定，即使來源是 loopback 或附上 loopback 轉發標頭
+- **THEN** server 回傳 `401 TEACHER_AUTH_REQUIRED`，組別不變
+
 #### Scenario: Reject non-loopback group configuration
-- **WHEN** 非 loopback 來源提出組別設定，即使附上偽造的 loopback forwarded header
-- **THEN** server 拒絕操作並回傳契約格式 JSON 錯誤
+- **WHEN** 非 loopback 來源提出組別設定
+- **THEN** server 依老師登入判斷權限：未登入回傳 `401 TEACHER_AUTH_REQUIRED` 且組別不變；已登入老師在「準備中」提交合法設定時，server 更新組別清單
 
 ### Requirement: Group count and names are validated
 組別設定 SHALL 支援 1 至 100 組；每個組名去除前後空白後 SHALL 為 1 至 30 字元，且名稱不得重複。
@@ -124,22 +128,3 @@ server SHALL 提供目前組別清單；`GET /api/session` 的 `groupCount` SHAL
 #### Scenario: Show reconnecting after missed events
 - **WHEN** 連線超過 40 秒未收到任何 phase 或 heartbeat 事件
 - **THEN** 學生頁面顯示「重新連線中」並依 SSE 重連及 session 摘要恢復
-
-### Requirement: Temporary teacher page only configures groups
-臨時教師頁面 SHALL 只提供組數/組名設定、預設名稱產生功能，以及 Guided Notes 匯入（上傳 xlsx 或貼上 Google 試算表連結、核對摘要、確認或取消）；設定與匯入 API 仍 SHALL 僅接受 loopback，正式教師端介面與密碼驗證由後續 change 處理。
-
-#### Scenario: Configure groups from localhost
-- **WHEN** 教師在 localhost 使用臨時頁面提交合法組別設定
-- **THEN** 頁面顯示設定成功且 server 的組別清單與摘要數量更新
-
-#### Scenario: No quiz management on temporary page
-- **WHEN** 教師開啟臨時組別設定頁
-- **THEN** 頁面不提供作答、送出、監看或正式教師控制功能
-
-#### Scenario: Import Guided Notes from localhost
-- **WHEN** 教師在 localhost 使用臨時頁面匯入合法的 Guided Notes 並確認摘要
-- **THEN** 頁面顯示已匯入的工作表與題數，且 server 的活動摘要題數更新
-
-#### Scenario: Import controls disabled outside preparation
-- **WHEN** 活動不是「準備中」時開啟臨時頁面
-- **THEN** 匯入操作被停用，並說明只能在準備中匯入

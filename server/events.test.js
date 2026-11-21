@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
 import { createApplication } from './index.js';
 
@@ -148,6 +149,118 @@ test('unexpected errors return a sanitized JSON error envelope', async () => {
     assert.doesNotMatch(JSON.stringify(body), /stack|secret|Error:|test-only-secret-marker/i);
   } finally {
     await new Promise((resolve) => errorServer.close(resolve));
+  }
+});
+
+const TEST_PASSWORD = 'test-password';
+
+async function startTeacherApp(environment = 'test') {
+  const app = createApplication({ environment, teacherPassword: TEST_PASSWORD }).listen(0, '127.0.0.1');
+  await new Promise((resolve) => app.once('listening', resolve));
+  const url = `http://127.0.0.1:${app.address().port}`;
+  const login = await fetch(`${url}/api/teacher/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: TEST_PASSWORD }),
+  });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const post = (path, { json, raw, auth = true } = {}) => fetch(`${url}${path}`, {
+    method: 'POST',
+    headers: {
+      ...(auth ? { Cookie: cookie } : {}),
+      ...(json ? { 'Content-Type': 'application/json' } : {}),
+      ...(raw ? { 'Content-Type': 'application/octet-stream' } : {}),
+    },
+    body: json ? JSON.stringify(json) : raw,
+  });
+  return { app, url, post };
+}
+
+async function readUntilBlock(reader, decoder, buffer) {
+  while (!buffer.includes('\n\n')) buffer += decoder.decode((await reader.read()).value, { stream: true });
+  return buffer;
+}
+
+test('session control requires teacher login even from loopback and publishes nothing when rejected', async () => {
+  const { app, url, post } = await startTeacherApp();
+  const stream = await fetch(`${url}/api/events`);
+  const reader = stream.body.getReader();
+  const decoder = new TextDecoder();
+  try {
+    assert.equal(await readUntilBlock(reader, decoder, ''), 'retry: 3000\n\n');
+    for (const path of ['/api/session/start', '/api/session/end']) {
+      const response = await post(path, { auth: false });
+      assert.equal(response.status, 401);
+      assert.deepEqual(await response.json(), {
+        error: { code: 'TEACHER_AUTH_REQUIRED', message: '請先以老師密碼登入。' },
+      });
+    }
+    const next = await Promise.race([
+      reader.read().then(() => 'event'),
+      new Promise((resolve) => setTimeout(() => resolve('none'), 300)),
+    ]);
+    assert.equal(next, 'none', 'rejected requests must not publish a phase event');
+    assert.equal((await fetch(`${url}/api/session`).then((response) => response.json())).data.phase, '準備中');
+  } finally {
+    await reader.cancel();
+    await new Promise((resolve) => app.close(resolve));
+  }
+});
+
+test('starting requires groups, then questions, and the phase is checked first', async () => {
+  const { app, url, post } = await startTeacherApp();
+  try {
+    const noGroups = await post('/api/session/start');
+    assert.equal(noGroups.status, 409);
+    assert.deepEqual(await noGroups.json(), { error: { code: 'NO_GROUPS', message: '請先設定組別。' } });
+
+    assert.equal((await post('/api/groups/generate', { json: { count: 2 } })).status, 200);
+    const noQuestions = await post('/api/session/start');
+    assert.equal(noQuestions.status, 409);
+    assert.deepEqual(await noQuestions.json(), { error: { code: 'QUESTIONS_REQUIRED', message: '請先匯入學習單。' } });
+    assert.equal((await fetch(`${url}/api/session`).then((response) => response.json())).data.phase, '準備中');
+
+    const workbook = await readFile(new URL('../fixtures/guided-notes/01-official-single.xlsx', import.meta.url));
+    const preview = await post('/api/teacher/guided-notes/preview/file', { raw: workbook }).then((response) => response.json());
+    assert.equal((await post('/api/teacher/guided-notes/confirm', { json: { previewId: preview.data.previewId } })).status, 200);
+
+    const stream = await fetch(`${url}/api/events`);
+    const reader = stream.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      let buffer = await readUntilBlock(reader, decoder, '');
+      buffer = buffer.slice(buffer.indexOf('\n\n') + 2);
+      const startedAt = Date.now();
+      const started = await post('/api/session/start');
+      assert.equal(started.status, 200);
+      assert.equal((await started.json()).data.phase, '搶答中');
+      buffer = await readUntilBlock(reader, decoder, buffer);
+      assert.ok(Date.now() - startedAt < 2_000, 'phase event must arrive within two seconds');
+      assert.match(buffer, /^event: phase\ndata: \{"phase":"搶答中"/);
+    } finally {
+      await reader.cancel();
+    }
+
+    const repeated = await post('/api/session/start');
+    assert.equal(repeated.status, 409);
+    assert.equal((await repeated.json()).error.code, 'INVALID_PHASE_TRANSITION');
+    const ended = await post('/api/session/end');
+    assert.equal(ended.status, 200);
+    assert.equal((await ended.json()).data.phase, '已結束');
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+  }
+});
+
+test('development phase route needs no teacher login and stays mounted only in development', async () => {
+  const { app, url } = await startTeacherApp('development');
+  try {
+    const response = await fetch(`${url}/api/dev/phase/%E6%90%B6%E7%AD%94%E4%B8%AD`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).data.phase, '搶答中');
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
   }
 });
 

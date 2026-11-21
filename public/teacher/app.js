@@ -1,4 +1,13 @@
 import {
+  createConsoleState,
+  describeAction,
+  describeSummary,
+  getConsoleControls,
+  getSetupBlockedReason,
+  isAuthExpired,
+  reduceConsole,
+} from './console-logic.js';
+import {
   createImportState,
   createRequestSequence,
   describeCurrent,
@@ -9,27 +18,247 @@ import {
   reduceImport,
 } from './import-logic.js';
 
+class ApiError extends Error {
+  constructor(message, code, status) {
+    super(message);
+    this.code = code;
+    this.status = status;
+  }
+}
+
+async function requestJson(path, options) {
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch {
+    throw new ApiError('伺服器沒有回應，請稍後再試。');
+  }
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    // 非 JSON 回應視為伺服器錯誤
+  }
+  if (!response.ok) {
+    throw new ApiError(body?.error?.message || '伺服器發生錯誤。', body?.error?.code, response.status);
+  }
+  return body;
+}
+
+const postJson = (path, body) => requestJson(path, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+// ---- 登入與控制台 ----
+
+const checkingView = document.querySelector('#checking-view');
+const notConfiguredView = document.querySelector('#not-configured-view');
+const loginView = document.querySelector('#login-view');
+const consoleView = document.querySelector('#console-view');
+const loginForm = document.querySelector('#login-form');
+const passwordInput = document.querySelector('#password');
+const loginSubmit = document.querySelector('#login-submit');
+const loginMessage = document.querySelector('#login-message');
+const logoutButton = document.querySelector('#logout');
+const summaryPhase = document.querySelector('#summary-phase');
+const summaryCounts = document.querySelector('#summary-counts');
+const startButton = document.querySelector('#start');
+const endButton = document.querySelector('#end');
+const endConfirm = document.querySelector('#end-confirm');
+const endConfirmYes = document.querySelector('#end-confirm-yes');
+const endConfirmNo = document.querySelector('#end-confirm-no');
+const sessionMessage = document.querySelector('#session-message');
+
+let consoleState = createConsoleState();
+const summaryRequests = createRequestSequence();
+let events = null;
+
+function renderConsole() {
+  const controls = getConsoleControls(consoleState);
+  checkingView.hidden = consoleState.view !== 'checking';
+  notConfiguredView.hidden = consoleState.view !== 'notConfigured';
+  loginView.hidden = consoleState.view !== 'login';
+  consoleView.hidden = consoleState.view !== 'console';
+  logoutButton.hidden = !controls.canLogout;
+
+  loginSubmit.disabled = !controls.canLogin;
+  passwordInput.disabled = !controls.canLogin;
+  loginSubmit.textContent = consoleState.loggingIn ? '登入中…' : '登入';
+  loginMessage.textContent = consoleState.loginError;
+
+  const { phase, counts } = describeSummary(consoleState.summary);
+  summaryPhase.textContent = phase;
+  summaryCounts.textContent = counts;
+  startButton.disabled = !controls.canStart;
+  endButton.disabled = !controls.canEnd;
+  endConfirm.hidden = !controls.showEndConfirm;
+  endConfirmYes.disabled = !controls.canConfirmEnd;
+  sessionMessage.textContent = describeAction(consoleState);
+
+  renderGroupsLock();
+}
+
+function dispatchConsole(event) {
+  consoleState = reduceConsole(consoleState, event);
+  renderConsole();
+}
+
+function handleAuthError(error) {
+  if (!isAuthExpired(error.code)) return false;
+  dispatchConsole({ type: 'authExpired' });
+  return true;
+}
+
+function currentPhase() {
+  return consoleState.summary?.phase;
+}
+
+async function loadSummary() {
+  const requestId = summaryRequests.next();
+  try {
+    const { data } = await requestJson('/api/session');
+    if (!summaryRequests.isLatest(requestId)) return;
+    dispatchConsole({ type: 'summaryLoaded', summary: data });
+    dispatchImport({ type: 'phaseChanged', phase: data.phase });
+  } catch (error) {
+    if (!summaryRequests.isLatest(requestId)) return;
+    sessionMessage.textContent = `無法取得活動狀態：${error.message}`;
+  }
+}
+
+function openEvents() {
+  if (events) return;
+  events = new EventSource('/api/events');
+  events.addEventListener('open', () => {
+    // 連上或重新連上（例如 server 重新啟動）時取得權威快照；登入失效會由匯入狀態的 401 帶回登入畫面
+    if (consoleState.view !== 'console') return;
+    loadSummary();
+    loadImportStatus();
+  });
+  events.addEventListener('phase', (event) => {
+    try {
+      const { phase } = JSON.parse(event.data);
+      dispatchConsole({ type: 'phaseChanged', phase });
+      dispatchImport({ type: 'phaseChanged', phase });
+    } catch {
+      // 格式錯誤的事件直接略過，下面重新讀取摘要
+    }
+    loadSummary();
+  });
+}
+
+function enterConsole() {
+  openEvents();
+  loadSummary();
+  loadGroups();
+  loadImportStatus();
+}
+
+async function loadAuth() {
+  try {
+    const { data } = await requestJson('/api/teacher/auth');
+    dispatchConsole({ type: 'authLoaded', ...data });
+    if (consoleState.view === 'console') enterConsole();
+  } catch (error) {
+    checkingView.textContent = `無法連線到伺服器：${error.message}`;
+  }
+}
+
+loginForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!getConsoleControls(consoleState).canLogin) return;
+  const password = passwordInput.value;
+  dispatchConsole({ type: 'requestLogin' });
+  try {
+    await postJson('/api/teacher/login', { password });
+    passwordInput.value = '';
+    dispatchConsole({ type: 'loggedIn' });
+    enterConsole();
+  } catch (error) {
+    passwordInput.value = '';
+    dispatchConsole({ type: 'loginFailed', code: error.code, message: error.status ? error.message : undefined });
+    if (consoleState.view === 'login') passwordInput.focus();
+  }
+});
+
+logoutButton.addEventListener('click', async () => {
+  try {
+    await requestJson('/api/teacher/logout', { method: 'POST' });
+  } catch {
+    // 即使 server 沒有回應，也回到登入畫面
+  }
+  dispatchConsole({ type: 'loggedOut' });
+});
+
+startButton.addEventListener('click', async () => {
+  if (!getConsoleControls(consoleState).canStart) return;
+  dispatchConsole({ type: 'requestStart' });
+  try {
+    const { data } = await requestJson('/api/session/start', { method: 'POST' });
+    dispatchConsole({ type: 'startDone', phase: data.phase });
+    dispatchImport({ type: 'phaseChanged', phase: data.phase });
+  } catch (error) {
+    if (!handleAuthError(error)) dispatchConsole({ type: 'startFailed', message: error.message });
+  }
+  if (consoleState.view === 'console') loadSummary();
+});
+
+endButton.addEventListener('click', () => {
+  if (getConsoleControls(consoleState).canEnd) dispatchConsole({ type: 'requestEnd' });
+});
+
+endConfirmNo.addEventListener('click', () => dispatchConsole({ type: 'cancelEnd' }));
+
+endConfirmYes.addEventListener('click', async () => {
+  if (!getConsoleControls(consoleState).canConfirmEnd) return;
+  dispatchConsole({ type: 'confirmEnd' });
+  try {
+    const { data } = await requestJson('/api/session/end', { method: 'POST' });
+    dispatchConsole({ type: 'endDone', phase: data.phase });
+  } catch (error) {
+    if (handleAuthError(error)) return;
+    let phase = currentPhase();
+    try {
+      phase = (await requestJson('/api/session')).data.phase;
+    } catch {
+      // 讀不到最新階段時維持畫面上的階段
+    }
+    dispatchConsole({ type: 'endFailed', code: error.code, message: error.message, phase });
+  }
+  if (consoleState.view === 'console') loadSummary();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || consoleState.view !== 'console') return;
+  loadSummary();
+  loadImportStatus();
+});
+
+// ---- 組別設定 ----
+
 const countInput = document.querySelector('#group-count');
 const generateButton = document.querySelector('#generate');
 const applyButton = document.querySelector('#apply');
 const groupList = document.querySelector('#group-list');
 const message = document.querySelector('#message');
-const hostWarning = document.querySelector('#host-warning');
+const groupsBlocked = document.querySelector('#groups-blocked');
+let groupsBusy = false;
 
-const allowedHosts = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
-const isAllowedHost = allowedHosts.has(location.hostname.toLowerCase());
-hostWarning.hidden = isAllowedHost;
-
-async function requestJson(path, options) {
-  const response = await fetch(path, options);
-  const body = await response.json();
-  if (!response.ok) throw new Error(body?.error?.message || '伺服器發生錯誤。');
-  return body;
+function renderGroupsLock() {
+  const reason = getSetupBlockedReason(currentPhase());
+  const locked = !getConsoleControls(consoleState).canSetup;
+  groupsBlocked.textContent = reason;
+  groupsBlocked.hidden = reason === '';
+  countInput.disabled = locked;
+  generateButton.disabled = locked || groupsBusy;
+  applyButton.disabled = locked || groupsBusy;
+  for (const input of groupList.querySelectorAll('input')) input.disabled = locked;
 }
 
 function renderGroups(groups) {
-  groupList.replaceChildren();
-  for (const group of groups) {
+  groupList.replaceChildren(...groups.map((group) => {
     const row = document.createElement('label');
     row.textContent = `第 ${group.id} 組名稱`;
     const input = document.createElement('input');
@@ -38,42 +267,51 @@ function renderGroups(groups) {
     input.value = group.name;
     input.dataset.groupId = String(group.id);
     row.append(input);
-    groupList.append(row);
-  }
+    return row;
+  }));
+  renderGroupsLock();
 }
+
+const groupRequests = createRequestSequence();
 
 async function loadGroups() {
+  const requestId = groupRequests.next();
   try {
     const { data } = await requestJson('/api/groups');
-    renderGroups(data.groups);
+    if (groupRequests.isLatest(requestId)) renderGroups(data.groups);
   } catch (error) {
-    message.textContent = error.message;
+    if (groupRequests.isLatest(requestId)) message.textContent = error.message;
   }
 }
 
-generateButton.addEventListener('click', async () => {
+async function submitGroups(send, successText) {
+  groupsBusy = true;
+  renderGroupsLock();
+  const requestId = groupRequests.next();
+  try {
+    const { data } = await send();
+    if (!groupRequests.isLatest(requestId)) return;
+    renderGroups(data.groups);
+    message.textContent = successText;
+    loadSummary();
+  } catch (error) {
+    if (!handleAuthError(error)) message.textContent = error.message;
+  } finally {
+    groupsBusy = false;
+    renderGroupsLock();
+  }
+}
+
+generateButton.addEventListener('click', () => {
   const count = Number(countInput.value);
   if (!Number.isInteger(count) || count < 1 || count > 100) {
     message.textContent = '組數必須是 1 到 100 的整數。';
     return;
   }
-  generateButton.disabled = true;
-  try {
-    const { data } = await requestJson('/api/groups/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ count }),
-    });
-    renderGroups(data.groups);
-    message.textContent = '已產生組別，確認名稱後按「套用組別」。';
-  } catch (error) {
-    message.textContent = error.message;
-  } finally {
-    generateButton.disabled = false;
-  }
+  submitGroups(() => postJson('/api/groups/generate', { count }), '已產生組別，確認名稱後按「套用組別」。');
 });
 
-applyButton.addEventListener('click', async () => {
+applyButton.addEventListener('click', () => {
   const groups = Array.from(groupList.querySelectorAll('input[data-group-id]'), (input) => ({
     id: Number(input.dataset.groupId),
     name: input.value,
@@ -82,23 +320,14 @@ applyButton.addEventListener('click', async () => {
     message.textContent = '請先載入或產生組別。';
     return;
   }
-  applyButton.disabled = true;
-  try {
-    const { data } = await requestJson('/api/groups', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groups }),
-    });
-    renderGroups(data.groups);
-    message.textContent = '組別設定已套用。';
-  } catch (error) {
-    message.textContent = error.message;
-  } finally {
-    applyButton.disabled = false;
-  }
+  submitGroups(() => requestJson('/api/groups', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groups }),
+  }), '組別設定已套用。');
 });
 
-loadGroups();
+// ---- 匯入學習單 ----
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const importCurrent = document.querySelector('#import-current');
@@ -115,7 +344,7 @@ const importConfirmButton = document.querySelector('#import-confirm');
 const importCancelButton = document.querySelector('#import-cancel');
 const importMessage = document.querySelector('#import-message');
 
-let importState = createImportState({ isAllowedHost });
+let importState = createImportState();
 const importRequests = createRequestSequence();
 const statusRequests = createRequestSequence();
 
@@ -140,9 +369,7 @@ function summaryRow(row) {
 function renderImport() {
   const controls = getImportControls(importState);
   const blockedReason = getBlockedReason(importState);
-  importCurrent.textContent = isAllowedHost
-    ? describeCurrent(importState.current)
-    : '請以 localhost 開啟本頁才能查看匯入狀態。';
+  importCurrent.textContent = describeCurrent(importState.current);
   importBlocked.textContent = blockedReason;
   importBlocked.hidden = blockedReason === '';
   importFile.disabled = !controls.canSubmit;
@@ -171,14 +398,11 @@ function dispatchImport(event) {
 async function loadImportStatus() {
   const requestId = statusRequests.next();
   try {
-    const [session, imported] = await Promise.all([
-      requestJson('/api/session'),
-      isAllowedHost ? requestJson('/api/teacher/guided-notes') : Promise.resolve({ data: { current: null } }),
-    ]);
+    const { data } = await requestJson('/api/teacher/guided-notes');
     if (!statusRequests.isLatest(requestId)) return;
-    dispatchImport({ type: 'loaded', phase: session.data.phase, current: imported.data.current });
+    dispatchImport({ type: 'loaded', current: data.current, phase: currentPhase() });
   } catch (error) {
-    if (!statusRequests.isLatest(requestId)) return;
+    if (!statusRequests.isLatest(requestId) || handleAuthError(error)) return;
     importCurrent.textContent = `無法取得匯入狀態：${error.message}`;
   }
 }
@@ -193,7 +417,7 @@ async function requestPreview(send) {
   } catch (error) {
     if (!importRequests.isLatest(requestId)) return;
     dispatchImport({ type: 'previewFailed', message: error.message });
-    loadImportStatus();
+    if (!handleAuthError(error)) loadImportStatus();
   }
 }
 
@@ -220,11 +444,7 @@ importLinkButton.addEventListener('click', () => {
     dispatchImport({ type: 'previewFailed', message: '請先貼上 Google 試算表連結。' });
     return;
   }
-  requestPreview(() => requestJson('/api/teacher/guided-notes/preview/link', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
-  }));
+  requestPreview(() => postJson('/api/teacher/guided-notes/preview/link', { url }));
 });
 
 importConfirmButton.addEventListener('click', async () => {
@@ -232,19 +452,16 @@ importConfirmButton.addEventListener('click', async () => {
   const requestId = importRequests.next();
   dispatchImport({ type: 'requestConfirm' });
   try {
-    const { data } = await requestJson('/api/teacher/guided-notes/confirm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ previewId }),
-    });
+    const { data } = await postJson('/api/teacher/guided-notes/confirm', { previewId });
     if (!importRequests.isLatest(requestId)) return;
     importFile.value = '';
     importLink.value = '';
     dispatchImport({ type: 'confirmed', current: data.current });
+    loadSummary();
   } catch (error) {
     if (!importRequests.isLatest(requestId)) return;
     dispatchImport({ type: 'confirmFailed', message: error.message });
-    loadImportStatus();
+    if (!handleAuthError(error)) loadImportStatus();
   }
 });
 
@@ -253,9 +470,6 @@ importCancelButton.addEventListener('click', () => {
   dispatchImport({ type: 'cancel' });
 });
 
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') loadImportStatus();
-});
-
+renderConsole();
 renderImport();
-loadImportStatus();
+loadAuth();

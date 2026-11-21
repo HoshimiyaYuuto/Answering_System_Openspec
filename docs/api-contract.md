@@ -4,9 +4,9 @@
 
 ## 契約狀態與已知限制
 
-- 本文件只記錄已實作的端點；尚未實作的功能（送出、結果、作廢、老師密碼、匯出等）在各自的 change 中新增。
-- 活動狀態存在 server 記憶體；server 重啟後組別、進場紀錄與已匯入的題目全部清空。
-- 老師身分驗證（共同契約 D18）尚未實作，目前以 loopback 限制暫代；改為密碼後，下列各節所有「loopback 限制」將以同一個老師驗證機制取代。遠端講課在此之前無法使用。
+- 本文件只記錄已實作的端點；尚未實作的功能（送出、結果、作廢、匯出等）在各自的 change 中新增。
+- 活動狀態存在 server 記憶體；server 重啟後組別、進場紀錄、已匯入的題目與老師登入狀態全部清空。
+- 老師身分驗證（共同契約 D18）以 `TEACHER_PASSWORD` 密碼登入實作（見「老師登入」），已取代原本的 loopback 限制；loopback 只剩開發路由 `/api/dev/phase/:phase` 使用。新增的老師端點一律使用同一個登入檢查。
 
 ## 通用格式
 
@@ -36,13 +36,77 @@
 `phase` 值為 `準備中`、`搶答中`、`已結束`。
 `groupCount` 為目前實際組別數。
 
+## 老師登入
+
+老師以環境變數 `TEACHER_PASSWORD` 設定的密碼登入。登入狀態存在 HttpOnly cookie，瀏覽器會自動附在之後的請求上，頁面 JavaScript 讀不到。以下標示「需老師登入」的端點，未登入時一律回 `401 TEACHER_AUTH_REQUIRED`，且檢查順序為登入 → 階段 → 請求內容。是否需要登入與請求來源無關：localhost 未登入也會被拒絕，區網裝置登入後也能操作；server 不採信 `X-Forwarded-For` 等轉發標頭。
+
+需老師登入的端點：`PUT /api/groups`、`POST /api/groups/generate`、`POST /api/session/start`、`POST /api/session/end`，以及「Guided Notes 匯入」一節的四個端點。學生端點、`GET /api/session`、`GET /api/groups`、`GET /api/events` 不需登入。
+
+登入狀態維持到登出、關閉瀏覽器或 server 重新啟動為止。回應內容不包含密碼或 token。
+
+### `POST /api/teacher/login`
+
+Request：
+
+```json
+{ "password": "<老師密碼>" }
+```
+
+成功回 `200`，並設定 cookie：
+
+```text
+Set-Cookie: teacher_session=<token>; HttpOnly; SameSite=Strict; Path=/
+```
+
+```json
+{ "data": { "authenticated": true } }
+```
+
+| HTTP | Code | 情況 |
+| --- | --- | --- |
+| 400 | `INVALID_LOGIN_REQUEST` | 沒有 `password` 欄位，或不是字串 |
+| 401 | `WRONG_PASSWORD` | 密碼錯誤 |
+| 429 | `TOO_MANY_ATTEMPTS` | 同一來源 60 秒內已有 10 次密碼錯誤；限制期間即使密碼正確也拒絕 |
+| 503 | `TEACHER_PASSWORD_NOT_SET` | server 沒有設定 `TEACHER_PASSWORD`（或為空字串），任何密碼都無法登入 |
+
+### `POST /api/teacher/logout`
+
+不需 request body。使目前的登入狀態失效並清除 cookie，未登入時呼叫也回 `200`：
+
+```json
+{ "data": { "authenticated": false } }
+```
+
+### `GET /api/teacher/auth`
+
+不需登入。回傳目前請求是否已登入，以及 server 是否已設定老師密碼，供教師頁決定顯示哪個畫面：
+
+```json
+{ "data": { "authenticated": false, "passwordConfigured": true } }
+```
+
+### PowerShell 登入範例
+
+`-SessionVariable` 保存登入後的 cookie，之後的請求以 `-WebSession` 帶上：
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/login -ContentType 'application/json' -Body '{"password":"<老師密碼>"}' -SessionVariable teacher
+Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSession $teacher
+```
+
 ## 階段控制
 
-以下控制端點目前僅接受 loopback 來源（IPv4 `127.0.0.1`、IPv6 `::1`，含 IPv4-mapped loopback）。不得以 `X-Forwarded-For` 等用戶端可提供的轉發標頭判定來源。非 loopback 回 `403`。後續以老師密碼驗證取代此限制（見「契約狀態與已知限制」）；在此之前教師端須以 localhost 開啟，以本機區網 IP 開啟時來源不是 loopback，會被拒絕。
+以下控制端點需老師登入（見「老師登入」），未登入回 `401 TEACHER_AUTH_REQUIRED`。
 
 ### `POST /api/session/start`
 
-要求 body 為空，僅允許 `準備中` 轉為 `搶答中`。成功回 `200`，並回傳更新後的 `phase` 與 `serverTime`。不允許的階段轉移回 `409`。
+要求 body 為空，僅允許 `準備中` 轉為 `搶答中`，依序檢查：
+
+1. 階段不是 `準備中` → `409 INVALID_PHASE_TRANSITION`
+2. 沒有任何組別 → `409 NO_GROUPS`
+3. 沒有任何題目 → `409 QUESTIONS_REQUIRED`
+
+成功回 `200`，並回傳更新後的 `phase` 與 `serverTime`。被拒絕時階段不變，也不發布階段事件。
 
 ### `POST /api/session/end`
 
@@ -81,15 +145,22 @@ client 若超過 40 秒沒收到任何事件（含 `phase` 與 `heartbeat`），
 | HTTP | Code | 用途 |
 | --- | --- | --- |
 | 400 | `INVALID_JSON` | JSON 格式錯誤或請求欄位無效 |
-| 403 | `LOOPBACK_ONLY` | 控制端點呼叫來源不是 loopback |
+| 400 | `INVALID_LOGIN_REQUEST` | 登入請求缺少密碼或密碼不是字串 |
+| 401 | `TEACHER_AUTH_REQUIRED` | 呼叫需老師登入的端點時未登入或登入已失效 |
+| 401 | `WRONG_PASSWORD` | 老師密碼錯誤 |
+| 403 | `LOOPBACK_ONLY` | 僅用於 `NODE_ENV=development` 的開發路由 `/api/dev/phase/:phase`，呼叫來源不是 loopback |
 | 404 | `NOT_FOUND` | API 路徑不存在 |
 | 409 | `INVALID_PHASE_TRANSITION` | 階段轉移不合法 |
+| 409 | `NO_GROUPS` | 沒有任何組別時開始搶答 |
+| 409 | `QUESTIONS_REQUIRED` | 沒有任何題目時開始搶答 |
+| 429 | `TOO_MANY_ATTEMPTS` | 同一來源短時間內密碼錯誤太多次 |
+| 503 | `TEACHER_PASSWORD_NOT_SET` | server 未設定老師密碼 |
 | 413 | `BODY_TOO_LARGE` | JSON body 超過 16 KiB |
 | 500 | `INTERNAL_ERROR` | 未預期 server 錯誤 |
 
 ## 組別與學生進場
 
-本節新增端點均使用通用 JSON envelope。組別設定寫入端點 `PUT /api/groups` 與 `POST /api/groups/generate` 僅允許在階段為 `準備中` 且請求來源為 loopback 時執行；來源依實際 socket 位址判定，不採信 forwarded headers。非 loopback 回 `403 LOOPBACK_ONLY`，階段不符回 `409 GROUP_CONFIG_NOT_ALLOWED`。檢查順序依序為 loopback、階段、請求內容驗證。教師端須以 `http://localhost` 開啟；使用本機區網 IP 開啟會被拒絕。`GET /api/groups` 與學生進場端點不受此 loopback 寫入限制。
+本節新增端點均使用通用 JSON envelope。組別設定寫入端點 `PUT /api/groups` 與 `POST /api/groups/generate` 需老師登入，且僅允許在階段為 `準備中` 時執行。未登入回 `401 TEACHER_AUTH_REQUIRED`，階段不符回 `409 GROUP_CONFIG_NOT_ALLOWED`。檢查順序依序為登入、階段、請求內容驗證。教師端可由 localhost 或區網位址開啟。`GET /api/groups` 與學生進場端點不需登入。
 
 ### `GET /api/groups`
 
@@ -110,7 +181,7 @@ client 若超過 40 秒沒收到任何事件（含 `phase` 與 `heartbeat`），
 
 ### `PUT /api/groups`
 
-以完整清單取代現有組別。僅限 `準備中` 且 loopback。`groups` 必須包含 1 至 100 組；每個 `id` 是 1 至 100 的不重複正整數；每個 `name` 去除前後空白後長度為 1 至 30 字元，且名稱不重複。保留仍存在之組別 id 的學生進場關聯。
+以完整清單取代現有組別。需老師登入，僅限 `準備中`。`groups` 必須包含 1 至 100 組；每個 `id` 是 1 至 100 的不重複正整數；每個 `name` 去除前後空白後長度為 1 至 30 字元，且名稱不重複。保留仍存在之組別 id 的學生進場關聯。
 
 Request：
 
@@ -138,7 +209,7 @@ Request：
 
 ### `POST /api/groups/generate`
 
-依組數產生並套用預設名稱「第 N 組」。僅限 `準備中` 且 loopback；`count` 必須為 1 至 100 的整數，產生的組別 id 為 1 至 `count`。
+依組數產生並套用預設名稱「第 N 組」。需老師登入，僅限 `準備中`；`count` 必須為 1 至 100 的整數，產生的組別 id 為 1 至 `count`。
 
 Request：
 
@@ -238,7 +309,7 @@ Request：
 
 本節端點供教師端匯入 Guided Notes（填空學習單）。匯入分兩步：先取得摘要（預覽），老師確認後題目才生效並取代 `session.questions`；`GET /api/session` 的 `questionCount` 隨之更新。
 
-寫入端點（兩個預覽與確認）的檢查順序為 loopback、階段、請求內容：非 loopback 回 `403 LOOPBACK_ONLY`，非 `準備中` 回 `409 IMPORT_NOT_ALLOWED`。老師密碼功能完成前，教師端須以 `http://localhost` 開啟，且其 loopback 與階段檢查須與其他老師端寫入端點共用同一個 guard，以便之後一次換成密碼驗證。
+本節四個端點都需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`，與其他老師端點共用同一個登入檢查（`requireTeacher`）。寫入端點（兩個預覽與確認）的檢查順序為登入、階段、請求內容：非 `準備中` 回 `409 IMPORT_NOT_ALLOWED`。上傳端點在讀取檔案內容之前就先檢查登入。
 
 辨識規則：在任一工作表中尋找同一列內容為「題號」「題目」「作答」的表頭列；表頭以下題號欄為正整數的列為一題；題號儲存格向下合併多列時為題組，每一列一個空格。不依賴固定儲存格位置。每個空格在原檔中的位置只保存在 server，不出現在任何 API 回應中。匯入後的位置只作為預設參考：以 Google 試算表連結匯入時，server 另保存試算表 ID 與工作表，寫回線上試算表（共同契約 D12）前須重新讀取並依同一規則重新定位，不得只依匯入當時的儲存格位置寫入。這些內部資訊同樣不出現在 API 回應中。
 
@@ -322,7 +393,7 @@ Request：
 
 ### `GET /api/teacher/guided-notes`
 
-取得目前已套用的匯入摘要，僅接受 loopback。尚未匯入時：
+取得目前已套用的匯入摘要，需老師登入。尚未匯入時：
 
 ```json
 { "data": { "current": null } }
@@ -346,10 +417,12 @@ Request：
 
 ### PowerShell 範例
 
+先依「老師登入」的範例取得 `$teacher`，再執行：
+
 ```powershell
-Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/preview/file -ContentType 'application/octet-stream' -Headers @{ 'X-File-Name' = '01-official-single.xlsx' } -InFile fixtures/guided-notes/01-official-single.xlsx
-Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/confirm -ContentType 'application/json' -Body '{"previewId":"<上一步回傳的 previewId>"}'
-Invoke-RestMethod http://localhost:3000/api/teacher/guided-notes
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/preview/file -ContentType 'application/octet-stream' -Headers @{ 'X-File-Name' = '01-official-single.xlsx' } -InFile fixtures/guided-notes/01-official-single.xlsx -WebSession $teacher
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/confirm -ContentType 'application/json' -Body '{"previewId":"<上一步回傳的 previewId>"}' -WebSession $teacher
+Invoke-RestMethod http://localhost:3000/api/teacher/guided-notes -WebSession $teacher
 ```
 
 ## 待補的公開題目格式

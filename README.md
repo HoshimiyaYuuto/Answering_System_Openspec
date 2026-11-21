@@ -22,15 +22,28 @@ npm install
 npm start
 ```
 
-預設 server 綁定 `0.0.0.0:3000`，由 `HOST`、`PORT` 環境變數控制。學生入口為 `http://localhost:3000/student/`。
-
-組別設定與階段控制端點依實際連線來源限制為 loopback，不信任 `X-Forwarded-For` 等轉發標頭。教師操作請使用 `http://localhost:3000/teacher/` 或 `http://127.0.0.1:3000/teacher/`，兩者都是 loopback，寫入請求會被接受。以區網 IP 開啟時，頁面會顯示警告且無法設定組別，server 也會以 `403 LOOPBACK_ONLY` 拒絕寫入。
+預設 server 綁定 `0.0.0.0:3000`，由 `HOST`、`PORT` 環境變數控制。學生入口為 `http://localhost:3000/student/`，教師控制台為 `http://localhost:3000/teacher/`。
 
 Windows 防火牆第一次詢問是否允許 Node.js 網路存取時，若需要區網裝置連線，請選「私人網路」。
 
+## 老師密碼
+
+老師端（組別設定、匯入、開始與結束搶答）需要先以密碼登入，密碼由 `TEACHER_PASSWORD` 設定。第一次使用時，在專案根目錄：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+用編輯器打開 `.env`，把 `TEACHER_PASSWORD=replace-me` 改成自己的密碼，再執行 `npm start`。`.env` 已列在 `.gitignore`，不會被提交；請不要使用與其他服務相同的密碼，因為課堂環境以 HTTP 傳送。
+
+- 沒有設定密碼時，教師頁會說明需要先設定，任何密碼都無法登入。
+- 登入後重新整理頁面不需再登入；按「登出」、關閉瀏覽器或 server 重新啟動後需重新登入。
+- 同一台裝置 60 秒內密碼錯誤 10 次，會暫時無法登入，等一分鐘即可。
+- 老師可以用 localhost，也可以用手機或其他電腦以 `http://<區網IP>:3000/teacher/` 登入操作。每個網址的登入狀態分開，換網址要重新登入。
+
 ## 環境變數
 
-`.env.example` 可複製成 `.env` 作為設定範本，但目前程式不會自動載入 `.env`（沒有 dotenv 套件），請在啟動的 shell 設定環境變數。教師密碼功能完成時再決定如何載入。
+以 `npm start`（或 `node server/index.js`）啟動時，若專案根目錄有 `.env` 會自動載入，不需要額外套件。已在 shell 設定的環境變數優先於 `.env`。
 
 PowerShell：
 
@@ -50,13 +63,14 @@ HOST=0.0.0.0 PORT=3000 npm start
 | --- | --- | --- |
 | `HOST` | HTTP server 綁定位址 | `0.0.0.0` |
 | `PORT` | HTTP server 連接埠 | `3000` |
+| `TEACHER_PASSWORD` | 老師登入密碼；未設定或為空時老師無法登入 | 未設定 |
 | `NODE_ENV` | 只有精確設為 `development` 才載入開發種子與開發階段路由 | 未設定 |
 
 `NODE_ENV` 設為 `development` 以外的任何值，或未設定，都是一般模式：不載入種子資料，也不掛載開發路由。一般驗收與正式使用請保持未設定。
 
 `NODE_ENV=development` 會載入 50 題假題目與 100 組種子，並掛載 `/api/dev/phase/:phase`。
 
-`.env.example` 還列有 `TEACHER_PASSWORD`，但目前 server 未使用此變數。不可將真實密碼或金鑰提交到 repository。
+不可將真實密碼或金鑰提交到 repository，repository 只放不含真實值的 `.env.example`。
 
 ## 測試
 
@@ -68,14 +82,17 @@ npm test
 
 ## 開始與結束搶答
 
-`POST /api/session/start` 與 `POST /api/session/end` 不需 development 環境、request body 為空，且只接受 loopback 來源。可在本機 PowerShell 呼叫：
+在教師控制台設定組別並匯入學習單後，按「開始搶答」；要結束時按「結束搶答」並再按一次「確認結束」。沒有組別或沒有題目時無法開始，畫面會說明缺少什麼。結束後不能重新開始。
+
+也可以在 PowerShell 先登入再呼叫 API（`-SessionVariable` 保存登入的 cookie）：
 
 ```powershell
-Invoke-RestMethod -Method Post http://localhost:3000/api/session/start
-Invoke-RestMethod -Method Post http://localhost:3000/api/session/end
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/login -ContentType 'application/json' -Body '{"password":"<老師密碼>"}' -SessionVariable teacher
+Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSession $teacher
+Invoke-RestMethod -Method Post http://localhost:3000/api/session/end -WebSession $teacher
 ```
 
-這兩個端點執行正式的階段轉換。`/api/dev/phase/...` 是只在 `NODE_ENV=development` 掛載的開發捷徑，中文階段值在 PowerShell 網址中請用百分比編碼（與自動測試一致）：
+`/api/dev/phase/...` 是只在 `NODE_ENV=development` 掛載的開發捷徑，不需登入但只接受 localhost。中文階段值在 PowerShell 網址中請用百分比編碼（與自動測試一致）：
 
 ```powershell
 Invoke-RestMethod -Method Post 'http://localhost:3000/api/dev/phase/%E6%90%B6%E7%AD%94%E4%B8%AD'
@@ -85,7 +102,7 @@ Invoke-RestMethod -Method Post 'http://localhost:3000/api/dev/phase/%E6%BA%96%E5
 
 ## 匯入學習單
 
-在 `http://localhost:3000/teacher/` 的「匯入學習單」區塊匯入 Guided Notes，只能在「準備中」操作，且須以 localhost 或 127.0.0.1 開啟。
+登入教師控制台後，在「匯入學習單」區塊匯入 Guided Notes，只能在「準備中」操作。
 
 1. 選擇 `.xlsx` 檔（5 MiB 以內）後按「讀取檔案」，或貼上 Google 試算表連結後按「讀取連結」。
 2. 核對摘要：工作表、題數、空格數、每題是單題或題組、題組前綴，以及提醒事項。
@@ -117,7 +134,7 @@ npm run check:capacity
 
 - `server/`：Express server、SSE、測試與容量驗證腳本
 - `public/student/`：學生頁面
-- `public/teacher/`：教師臨時頁，提供組別設定與學習單匯入（正式教師端由教師端成員負責）
+- `public/teacher/`：教師控制台（登入、活動狀態、開始與結束搶答、組別設定、學習單匯入）
 - `fixtures/guided-notes/`：匯入用的測試學習單與預期結果
 - `docs/`：需求摘要、API 契約與驗證紀錄
 - `openspec/`：OpenSpec 規格與 change 文件
@@ -130,6 +147,6 @@ npm run check:capacity
 
 ## 目前進度
 
-- 已完成：API 契約與 server 骨架、組別與學生進場、Guided Notes 匯入（上傳 xlsx 與 Google 試算表連結）。
+- 已完成：API 契約與 server 骨架、組別與學生進場、Guided Notes 匯入（上傳 xlsx 與 Google 試算表連結）、老師密碼登入與教師控制台（開始與結束搶答）。
 - 下一步：搶答送出。
-- 教師端正式畫面、老師密碼登入、匯出寫回 Guided Notes 與 CSV 尚未完成。
+- 教師端監看與結果、重設活動、倒數、匯出寫回 Guided Notes 與 CSV 尚未完成。
