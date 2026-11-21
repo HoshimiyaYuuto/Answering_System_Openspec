@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f7fb">
-  <title>組別設定與匯入｜課堂搶答</title>
+  <title>教師控制台｜課堂搶答</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; color: #172033; background: #f4f7fb; }
     * { box-sizing: border-box; }
@@ -33,14 +33,62 @@
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 8px 10px; border-bottom: 1px solid #dde3ee; text-align: left; white-space: nowrap; }
     th { background: #f4f7fb; }
+    [hidden] { display: none !important; }
+    .summary-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 12px 0 0; }
+    .summary-grid dt { color: #5a6680; font-weight: 700; }
+    .summary-grid dd { margin: 0; font-weight: 800; }
+    #summary-phase { font-size: 1.4rem; }
+    button.danger { background: #b42318; }
+    .confirm { margin-top: 12px; padding: 12px; border-radius: 12px; background: #fff3f0; }
+    .confirm p { margin: 0; color: #7d1c13; font-weight: 700; }
+    .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .header button { width: auto; margin-top: 0; min-height: 44px; }
   </style>
 </head>
 <body>
   <main>
-    <h1>組別設定與匯入</h1>
-    <p class="notice">請以 <a href="http://localhost">http://localhost</a> 開啟本頁；以區網 IP 開啟時無法設定組別</p>
-    <p id="host-warning" class="warning" role="alert" hidden>目前不是從 localhost 開啟，無法寫入組別設定。</p>
-    <section class="panel">
+    <div class="header">
+      <h1>教師控制台</h1>
+      <button id="logout" type="button" class="secondary" hidden>登出</button>
+    </div>
+
+    <p id="checking-view" class="status">讀取中…</p>
+
+    <section id="not-configured-view" class="panel" hidden>
+      <h2>需要先設定老師密碼</h2>
+      <p class="notice">server 尚未設定老師密碼，目前無法登入。請在專案根目錄把 <code>.env.example</code> 複製成 <code>.env</code>，將 <code>TEACHER_PASSWORD</code> 改成自己的密碼，再重新啟動 server。</p>
+    </section>
+
+    <section id="login-view" class="panel" hidden>
+      <h2>老師登入</h2>
+      <form id="login-form">
+        <label for="password">老師密碼</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button id="login-submit" type="submit">登入</button>
+      </form>
+      <p id="login-message" class="message" role="alert" aria-live="assertive"></p>
+    </section>
+
+    <div id="console-view" hidden>
+      <section class="panel" aria-labelledby="session-title">
+        <h2 id="session-title">活動狀態</h2>
+        <dl class="summary-grid">
+          <dt>階段</dt><dd id="summary-phase" aria-live="polite">讀取中…</dd>
+          <dt>組別與題目</dt><dd id="summary-counts"></dd>
+        </dl>
+        <button id="start" type="button">開始搶答</button>
+        <button id="end" type="button" class="danger">結束搶答</button>
+        <div id="end-confirm" class="confirm" hidden>
+          <p>確定要結束搶答嗎？結束後學生無法再送出，也不能重新開始。</p>
+          <button id="end-confirm-yes" type="button" class="danger">確認結束</button>
+          <button id="end-confirm-no" type="button" class="secondary">取消</button>
+        </div>
+        <p id="session-message" class="message" role="status" aria-live="polite"></p>
+      </section>
+
+    <section class="panel" aria-labelledby="groups-title">
+      <h2 id="groups-title">組別設定</h2>
+      <p id="groups-blocked" class="warning" role="alert" hidden></p>
       <label for="group-count">組數（1 到 100）</label>
       <input id="group-count" type="number" min="1" max="100" step="1" value="5">
       <button id="generate" type="button">一鍵產生</button>
@@ -74,6 +122,7 @@
       </div>
       <p id="import-message" class="message" role="status" aria-live="polite"></p>
     </section>
+    </div>
   </main>
   <script type="module" src="/teacher/app.js"></script>
 </body>

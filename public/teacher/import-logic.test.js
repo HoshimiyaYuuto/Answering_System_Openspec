@@ -81,16 +81,18 @@ test('controls follow the view', () => {
   assert.equal(loading.canSubmit, false);
 });
 
-test('controls are disabled outside preparation and on non-localhost hosts', () => {
-  const started = reduceImport(createImportState(), { type: 'phaseChanged', phase: '搶答中' });
-  assert.match(getBlockedReason(started), /搶答中.*只能在準備中/);
-  assert.equal(getImportControls(started).canSubmit, false);
-
-  const remote = createImportState({ isAllowedHost: false });
-  assert.match(getBlockedReason(remote), /localhost/);
-  const remoteReviewing = reduceImport(remote, { type: 'previewLoaded', preview });
-  assert.equal(getImportControls(remoteReviewing).canConfirm, false);
-  assert.equal(getBlockedReason(createImportState()), '');
+test('controls are disabled outside preparation and only depend on the phase', () => {
+  for (const phase of ['搶答中', '已結束']) {
+    const locked = reduceImport(createImportState(), { type: 'phaseChanged', phase });
+    assert.match(getBlockedReason(locked), new RegExp(`${phase}.*只能在準備中`));
+    assert.equal(getImportControls(locked).canSubmit, false);
+    const lockedReviewing = reduceImport(locked, { type: 'previewLoaded', preview });
+    assert.equal(getImportControls(lockedReviewing).canConfirm, false);
+  }
+  const preparing = createImportState();
+  assert.equal(getBlockedReason(preparing), '');
+  assert.equal(getImportControls(preparing).canSubmit, true);
+  assert.equal('isAllowedHost' in preparing, false);
 });
 
 test('descriptions show the current import and preview details', () => {

@@ -24,10 +24,10 @@
 
 ## 3. 教師控制台頁面
 
-- [ ] 3.1 新增 `public/teacher/console-logic.js` 與 `public/teacher/console-logic.test.js`：畫面狀態（`checking`、`notConfigured`、`login`、`console`）、控制台事件（摘要更新、開始、結束確認與取消、結束時已是「已結束」視為成功、任何 `401` 回到登入並帶訊息、登出）、各按鈕可用條件（design 第 8 節）；驗證：`npm test` 涵蓋每個狀態轉換與按鈕條件，以及兩次結束只顯示「已結束」不顯示錯誤
-- [ ] 3.2 修改 `public/teacher/import-logic.js` 與 `public/teacher/import-logic.test.js`：移除 `isAllowedHost`，只依階段決定能否匯入；驗證：`npm test` 確認準備中可用、搶答中與已結束停用並說明原因，原有的狀態轉換與過期回應測試仍通過
-- [ ] 3.3 修改 `public/teacher/index.html`：標題改為「教師控制台」，新增登入區、未設定密碼說明區、活動摘要（階段、組數、題數）、開始與結束按鈕、結束確認列、登出按鈕，移除「請以 localhost 開啟」提示與警告，組別設定與匯入區塊保留；驗證：`npm start` 後開啟 `http://localhost:3000/teacher/`，HTML 中各區塊存在且只有「讀取中…」可見
-- [ ] 3.4 修改 `public/teacher/app.js`：串接 3.1、3.2 的邏輯與登入、摘要、開始、結束、登出 API，開啟 `/api/events` 同步階段，組別區塊依階段停用；驗證：`npm test` 通過，並依下列瀏覽器步驟操作（`.env` 設定測試用密碼）：
+- [x] 3.1 新增 `public/teacher/console-logic.js` 與 `public/teacher/console-logic.test.js`：畫面狀態（`checking`、`notConfigured`、`login`、`console`）、控制台事件（摘要更新、開始、結束確認與取消、結束時已是「已結束」視為成功、任何 `401` 回到登入並帶訊息、登出）、各按鈕可用條件（design 第 8 節）；驗證：`npm test` 涵蓋每個狀態轉換與按鈕條件，以及兩次結束只顯示「已結束」不顯示錯誤
+- [x] 3.2 修改 `public/teacher/import-logic.js` 與 `public/teacher/import-logic.test.js`：移除 `isAllowedHost`，只依階段決定能否匯入；驗證：`npm test` 確認準備中可用、搶答中與已結束停用並說明原因，原有的狀態轉換與過期回應測試仍通過
+- [x] 3.3 修改 `public/teacher/index.html`：標題改為「教師控制台」，新增登入區、未設定密碼說明區、活動摘要（階段、組數、題數）、開始與結束按鈕、結束確認列、登出按鈕，移除「請以 localhost 開啟」提示與警告，組別設定與匯入區塊保留；驗證：`npm start` 後開啟 `http://localhost:3000/teacher/`，HTML 中各區塊存在且只有「讀取中…」可見
+- [x] 3.4 修改 `public/teacher/app.js`：串接 3.1、3.2 的邏輯與登入、摘要、開始、結束、登出 API，開啟 `/api/events` 同步階段，組別區塊依階段停用；驗證：`npm test` 通過，並依下列瀏覽器步驟操作（`.env` 設定測試用密碼）：
   1. 開啟 `http://localhost:3000/teacher/`，只看到登入表單；輸入錯誤密碼，顯示密碼錯誤且欄位清空
   2. 輸入正確密碼，顯示控制台：準備中、0 組、0 題；重新整理後仍在控制台
   3. 直接按「開始搶答」，顯示需要先設定組別；產生並套用 5 組後再按，顯示需要先匯入學習單
@@ -38,12 +38,12 @@
   8. 在兩個教師分頁都按「結束搶答」並都按確認，兩個分頁都顯示「已結束」且沒有錯誤訊息，學生頁顯示「已結束」
   9. 停止 server 再 `npm start`，在教師分頁按「登出」以外的任一操作，回到登入畫面並說明登入已失效
   10. 不設定 `TEACHER_PASSWORD`（暫時移走 `.env`）重新啟動，教師頁顯示需要先設定密碼，沒有登入表單
-- [ ] 3.5 更新 `README.md`（老師密碼設定、登入方式、PowerShell 登入範例、區網裝置也可操作、目前進度）與 `openspec/config.yaml` 的 `context` 中「教師端須以 localhost 開啟」一句，改為老師端點需登入；驗證：依 README 從複製 `.env.example` 開始，可完成一次登入並開始搶答；`openspec validate add-teacher-console --strict` 通過
+- [x] 3.5 更新 `README.md`（老師密碼設定、登入方式、PowerShell 登入範例、區網裝置也可操作、目前進度）與 `openspec/config.yaml` 的 `context` 中「教師端須以 localhost 開啟」一句，改為老師端點需登入；驗證：依 README 從複製 `.env.example` 開始，可完成一次登入並開始搶答；`openspec validate add-teacher-console --strict` 通過
 
 ## 4. 整合驗證
 
-- [ ] 4.1 執行 `npm test` 與 `npm run check:capacity`，全部通過；確認 `git grep -n LOOPBACK_ONLY -- server public` 只剩開發路由與其測試
-- [ ] 4.2 人工驗證並記錄於 `docs/verification/add-teacher-console.md`：老師用 localhost 與區網位址（或手機）各登入一次，加上兩個不同來源的學生頁，完成「登入 → 設定組別 → 匯入 → 開始 → 結束」；另驗證連續 10 次錯誤密碼後第 11 次（即使正確）顯示稍後再試、60 秒後可登入；記錄驗證環境、步驟與結果
+- [x] 4.1 執行 `npm test` 與 `npm run check:capacity`，全部通過；確認 `git grep -n LOOPBACK_ONLY -- server public` 只剩開發路由與其測試
+- [x] 4.2 人工驗證並記錄於 `docs/verification/add-teacher-console.md`：老師用 localhost 與區網位址（或手機）各登入一次，加上兩個不同來源的學生頁，完成「登入 → 設定組別 → 匯入 → 開始 → 結束」；另驗證連續 10 次錯誤密碼後第 11 次（即使正確）顯示稍後再試、60 秒後可登入；記錄驗證環境、步驟與結果
 
 ## Workflow follow-up
 

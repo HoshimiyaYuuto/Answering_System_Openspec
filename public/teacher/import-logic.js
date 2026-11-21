@@ -1,7 +1,7 @@
 const PREPARING = '準備中';
 
-export function createImportState({ current = null, phase = PREPARING, isAllowedHost = true } = {}) {
-  return { view: 'idle', current, preview: null, error: '', phase, isAllowedHost };
+export function createImportState({ current = null, phase = PREPARING } = {}) {
+  return { view: 'idle', current, preview: null, error: '', phase };
 }
 
 export function reduceImport(state, event) {
@@ -34,7 +34,6 @@ export function reduceImport(state, event) {
 }
 
 export function getBlockedReason(state) {
-  if (!state.isAllowedHost) return '目前不是從 localhost 開啟，無法匯入學習單。';
   if (state.phase !== PREPARING) return `目前階段為「${state.phase}」，只能在準備中匯入學習單。`;
   return '';
 }

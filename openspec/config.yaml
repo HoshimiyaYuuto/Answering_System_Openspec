@@ -16,7 +16,7 @@ context: |
   - API 回應皆為 JSON。成功為 {"data": ...}，錯誤為 {"error":{"code","message"}}。
   - 時間一律由 server 產生，使用 ISO 8601 UTC。
   - 密碼與金鑰只放 .env，repo 只放不含真值的 .env.example。
-  - 教師端須以 localhost 開啟（階段控制與組別設定目前限 loopback）。
+  - 老師端點（組別設定、匯入、階段控制等）須老師登入，未登入回 401 TEACHER_AUTH_REQUIRED；新增老師端點時沿用 requireTeacher，不再以 loopback 判斷權限。
   - 程式識別字與 capability 名稱用英文。
   - 已存在的能力名稱為 api-contract-and-session-lifecycle 與 groups-and-entry。修改它們時用 MODIFIED，名稱須一字不差。
   - 開發用種子與測試路由只在 NODE_ENV 為 development 時啟用，未設定視為 production。
