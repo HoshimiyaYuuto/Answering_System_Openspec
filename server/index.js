@@ -2,6 +2,13 @@ import express from 'express';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createDevelopmentGroupSeed, createGroupsEntry, InvalidGroupsError } from './groups-entry.js';
+import {
+  createGuidedNotesImport,
+  downloadGuidedNotes,
+  GuidedNotesImportError,
+  MAX_GUIDED_NOTES_BYTES,
+  parseGuidedNotes,
+} from './guided-notes-import.js';
 
 function isLoopback(address = '') {
   const normalized = address.toLowerCase().replace(/^::ffff:/, '');
@@ -17,7 +24,21 @@ function loopbackOnly(request, response, next) {
   next();
 }
 
-export function createApplication({ environment = process.env.NODE_ENV, exposeTestErrorRoute = false } = {}) {
+function decodeFileName(header) {
+  const fallback = '上傳的檔案.xlsx';
+  if (!header) return fallback;
+  try {
+    return decodeURIComponent(header).trim().slice(0, 200) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function createApplication({
+  environment = process.env.NODE_ENV,
+  exposeTestErrorRoute = false,
+  downloadGuidedNotesImpl = downloadGuidedNotes,
+} = {}) {
   const app = express();
   const publicRoot = resolve('public');
   app.use('/api', (_request, response, next) => {
@@ -31,6 +52,7 @@ export function createApplication({ environment = process.env.NODE_ENV, exposeTe
   const isDevelopment = environment === 'development';
   const groups = createGroupsEntry({ seed: isDevelopment ? createDevelopmentGroupSeed() : [] });
   const session = { phase: '準備中', questions: [], groups };
+  const guidedNotes = createGuidedNotesImport();
   const eventClients = new Set();
 
   function sessionSummary() {
@@ -96,6 +118,85 @@ export function createApplication({ environment = process.env.NODE_ENV, exposeTe
       return response.status(status).json({ error });
     }
     response.json({ data: result.data });
+  });
+
+  function guidedNotesWriteGuard(request, response, next) {
+    if (!isLoopback(request.socket.remoteAddress)) {
+      return response.status(403).json({
+        error: { code: 'LOOPBACK_ONLY', message: '此操作僅允許本機呼叫。' },
+      });
+    }
+    if (session.phase !== '準備中') {
+      return response.status(409).json({
+        error: { code: 'IMPORT_NOT_ALLOWED', message: '只能在準備中匯入學習單。' },
+      });
+    }
+    next();
+  }
+
+  function sendImportError(response, error) {
+    if (!(error instanceof GuidedNotesImportError)) throw error;
+    return response.status(error.status).json({ error: { code: error.code, message: error.message } });
+  }
+
+  async function createImportPreview(response, fileBuffer, source) {
+    try {
+      const parsed = await parseGuidedNotes(fileBuffer);
+      const preview = guidedNotes.createPreview({
+        parsed,
+        source,
+        fileBuffer,
+        replacesExisting: session.questions.length > 0,
+      });
+      return response.json({ data: preview });
+    } catch (error) {
+      return sendImportError(response, error);
+    }
+  }
+
+  const rawWorkbook = express.raw({
+    type: ['application/octet-stream', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    limit: MAX_GUIDED_NOTES_BYTES,
+  });
+
+  app.post(
+    '/api/teacher/guided-notes/preview/file',
+    guidedNotesWriteGuard,
+    rawWorkbook,
+    (request, response) => {
+      const fileBuffer = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+      return createImportPreview(response, fileBuffer, { type: 'file', name: decodeFileName(request.get('X-File-Name')) });
+    },
+    (error, _request, response, next) => {
+      if (error.type !== 'entity.too.large') return next(error);
+      return response.status(413).json({
+        error: { code: 'IMPORT_FILE_TOO_LARGE', message: '檔案超過 5 MiB 上限。' },
+      });
+    },
+  );
+
+  app.post('/api/teacher/guided-notes/preview/link', guidedNotesWriteGuard, async (request, response) => {
+    let download;
+    try {
+      download = await downloadGuidedNotesImpl(request.body?.url);
+    } catch (error) {
+      return sendImportError(response, error);
+    }
+    return createImportPreview(response, download.buffer, { type: 'link', name: download.name });
+  });
+
+  app.post('/api/teacher/guided-notes/confirm', guidedNotesWriteGuard, (request, response) => {
+    try {
+      const { questions, summary } = guidedNotes.confirm(request.body?.previewId);
+      session.questions = questions;
+      return response.json({ data: { current: summary } });
+    } catch (error) {
+      return sendImportError(response, error);
+    }
+  });
+
+  app.get('/api/teacher/guided-notes', loopbackOnly, (_request, response) => {
+    response.json({ data: { current: guidedNotes.currentSummary() } });
   });
 
   if (exposeTestErrorRoute) {

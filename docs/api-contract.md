@@ -227,3 +227,121 @@ Request：
 | 409 | `GROUP_CONFIG_NOT_ALLOWED` | 非準備中階段要求設定或產生組別 |
 
 所有階段欄位及事件仍只使用既有三個值：`準備中`、`搶答中`、`已結束`。
+
+## Guided Notes 匯入
+
+本節端點供教師端匯入 Guided Notes（填空學習單）。匯入分兩步：先取得摘要（預覽），老師確認後題目才生效並取代 `session.questions`；`GET /api/session` 的 `questionCount` 隨之更新。
+
+寫入端點（兩個預覽與確認）的檢查順序為 loopback、階段、請求內容：非 loopback 回 `403 LOOPBACK_ONLY`，非 `準備中` 回 `409 IMPORT_NOT_ALLOWED`。老師密碼功能完成前，教師端須以 `http://localhost` 開啟。
+
+辨識規則：在任一工作表中尋找同一列內容為「題號」「題目」「作答」的表頭列；表頭以下題號欄為正整數的列為一題；題號儲存格向下合併多列時為題組，每一列一個空格。不依賴固定儲存格位置。每個空格在原檔中的位置只保存在 server，不出現在任何 API 回應中。
+
+### `POST /api/teacher/guided-notes/preview/file`
+
+上傳 xlsx 原始位元組並取得摘要。
+
+- `Content-Type`：`application/octet-stream` 或 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- `X-File-Name`：檔名（以 `encodeURIComponent` 編碼，可省略）
+- body 上限 5 MiB，超過回 `413 IMPORT_FILE_TOO_LARGE`；此上限只適用本端點，其他端點仍為 16 KiB JSON。
+
+成功回 `200`：
+
+```json
+{
+  "data": {
+    "previewId": "5f0c2a7e-6c1b-4b7e-9a39-1f2d3c4b5a69",
+    "source": { "type": "file", "name": "02-official-group.xlsx" },
+    "sheetName": "學習單",
+    "headerRow": 4,
+    "questionCount": 4,
+    "blankCount": 6,
+    "questions": [
+      { "id": 1, "type": "group", "blankCount": 2, "prefixes": ["（1）", "（2）"] },
+      { "id": 3, "type": "single", "blankCount": 1, "prefixes": [""] }
+    ],
+    "warnings": [],
+    "replacesExisting": false
+  }
+}
+```
+
+- `id` 為學習單上的題號，不重新編號。
+- `type` 為 `single`（單題）或 `group`（題組）。
+- `warnings` 為提醒文字陣列，例如作答格已有非前綴內容。
+- `replacesExisting` 為 `true` 時，表示目前已有題目，確認後會被取代。
+- server 只保留最新一份預覽；取得新預覽後，舊的 `previewId` 失效。取消匯入只需丟棄預覽，不需呼叫 API。
+
+### `POST /api/teacher/guided-notes/preview/link`
+
+以 Google 試算表連結匯入。試算表須開放「知道連結者可檢視」，不需要帳號或金鑰。
+
+Request：
+
+```json
+{ "url": "https://docs.google.com/spreadsheets/d/<試算表ID>/edit?usp=sharing" }
+```
+
+只接受 `https://docs.google.com/spreadsheets/d/<id>` 形式的連結；server 自行組成該試算表的 xlsx 匯出網址下載，不連線到其他主機。下載逾時 10 秒、上限 5 MiB。成功回應格式與上傳相同，`source.type` 為 `link`。
+
+### `POST /api/teacher/guided-notes/confirm`
+
+套用最新的預覽。
+
+Request：
+
+```json
+{ "previewId": "5f0c2a7e-6c1b-4b7e-9a39-1f2d3c4b5a69" }
+```
+
+成功回 `200`，`current` 為套用後的匯入摘要（欄位同預覽，不含 `previewId` 與 `replacesExisting`，另含 `importedAt`）：
+
+```json
+{
+  "data": {
+    "current": {
+      "source": { "type": "file", "name": "02-official-group.xlsx" },
+      "sheetName": "學習單",
+      "headerRow": 4,
+      "questionCount": 4,
+      "blankCount": 6,
+      "questions": [{ "id": 1, "type": "group", "blankCount": 2, "prefixes": ["（1）", "（2）"] }],
+      "warnings": [],
+      "importedAt": "2026-11-17T09:00:00.000Z"
+    }
+  }
+}
+```
+
+`previewId` 不是最新的預覽時回 `409 IMPORT_PREVIEW_EXPIRED`，題目不變。
+
+### `GET /api/teacher/guided-notes`
+
+取得目前已套用的匯入摘要，僅接受 loopback。尚未匯入時：
+
+```json
+{ "data": { "current": null } }
+```
+
+### 匯入錯誤狀態
+
+以下錯誤沿用既有錯誤 envelope；任何匯入失敗都不改變目前的題目。
+
+| HTTP | Code | 用途 |
+| --- | --- | --- |
+| 400 | `IMPORT_INVALID_FILE` | 沒有內容、不是 xlsx，或檔案損壞無法讀取 |
+| 413 | `IMPORT_FILE_TOO_LARGE` | 上傳或下載的檔案超過 5 MiB |
+| 400 | `IMPORT_NO_HEADER` | 所有工作表都找不到「題號／題目／作答」表頭列 |
+| 400 | `IMPORT_NO_QUESTIONS` | 有表頭但下方沒有任何數字題號 |
+| 400 | `IMPORT_DUPLICATE_NUMBER` | 題號重複，訊息含題號與兩個列號 |
+| 400 | `IMPORT_INVALID_LINK` | 不是 Google 試算表連結 |
+| 502 | `IMPORT_LINK_UNREACHABLE` | 下載失敗、逾時，或下載內容不是 xlsx（通常是未開放檢視） |
+| 409 | `IMPORT_NOT_ALLOWED` | 非 `準備中` 時要求匯入或確認 |
+| 409 | `IMPORT_PREVIEW_EXPIRED` | `previewId` 不是最新的預覽 |
+
+### PowerShell 範例
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/preview/file -ContentType 'application/octet-stream' -Headers @{ 'X-File-Name' = '01-official-single.xlsx' } -InFile fixtures/guided-notes/01-official-single.xlsx
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/confirm -ContentType 'application/json' -Body '{"previewId":"<上一步回傳的 previewId>"}'
+Invoke-RestMethod http://localhost:3000/api/teacher/guided-notes
+```

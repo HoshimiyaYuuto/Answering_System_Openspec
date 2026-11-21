@@ -83,6 +83,20 @@ Invoke-RestMethod -Method Post 'http://localhost:3000/api/dev/phase/%E5%B7%B2%E7
 Invoke-RestMethod -Method Post 'http://localhost:3000/api/dev/phase/%E6%BA%96%E5%82%99%E4%B8%AD'
 ```
 
+## 匯入學習單
+
+在 `http://localhost:3000/teacher/` 的「匯入學習單」區塊匯入 Guided Notes，只能在「準備中」操作，且須以 localhost 或 127.0.0.1 開啟。
+
+1. 選擇 `.xlsx` 檔（5 MiB 以內）後按「讀取檔案」，或貼上 Google 試算表連結後按「讀取連結」。
+2. 核對摘要：工作表、題數、空格數、每題是單題或題組、題組前綴，以及提醒事項。
+3. 按「確認匯入」後題目才生效；按「取消」則維持原本的題目。再次匯入並確認會取代目前的題目。
+
+學習單須有同一列寫著「題號」「題目」「作答」的表頭列，位置不限；表頭以下題號欄為數字的列是一題，題號儲存格向下合併多列為題組。使用 Google 試算表連結時，須在「共用」設定為「知道連結者可檢視」，不需要帳號或金鑰；若無法下載，請在 Google 試算表選「檔案 → 下載 → Microsoft Excel (.xlsx)」後改用上傳。
+
+測試用學習單在 `fixtures/guided-notes/`，預期結果記錄在 `expected.json`。
+
+API 細節見 [API 契約](docs/api-contract.md) 的「Guided Notes 匯入」一節。
+
 ## 容量驗證
 
 ```sh
@@ -103,7 +117,8 @@ npm run check:capacity
 
 - `server/`：Express server、SSE、測試與容量驗證腳本
 - `public/student/`：學生頁面
-- `public/teacher/`：教師組別設定臨時頁（正式教師端由隊友負責）
+- `public/teacher/`：教師臨時頁，提供組別設定與學習單匯入（正式教師端由教師端成員負責）
+- `fixtures/guided-notes/`：匯入用的測試學習單與預期結果
 - `docs/`：需求摘要、API 契約與驗證紀錄
 - `openspec/`：OpenSpec 規格與 change 文件
 
@@ -115,6 +130,6 @@ npm run check:capacity
 
 ## 目前進度
 
-- 已完成：API 契約與 server 骨架、組別與學生進場。
+- 已完成：API 契約與 server 骨架、組別與學生進場、Guided Notes 匯入（上傳 xlsx 與 Google 試算表連結）。
 - 下一步：搶答送出。
-- 教師端正式畫面與 Guided Notes 匯入匯出由隊友負責，尚未完成。
+- 教師端正式畫面、老師密碼登入、匯出寫回 Guided Notes 與 CSV 尚未完成。

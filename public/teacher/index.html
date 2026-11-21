@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f7fb">
-  <title>組別設定｜課堂搶答</title>
+  <title>組別設定與匯入｜課堂搶答</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; color: #172033; background: #f4f7fb; }
     * { box-sizing: border-box; }
@@ -21,11 +21,23 @@
     button:disabled { opacity: .55; }
     .group-list { display: grid; gap: 12px; margin-top: 12px; }
     .message { min-height: 1.5em; color: #a12626; line-height: 1.5; }
+    h2 { margin: 0 0 8px; font-size: 1.3rem; }
+    h3 { margin: 18px 0 8px; font-size: 1.1rem; }
+    .status { margin: 8px 0; padding: 12px; border-radius: 10px; background: #eef2f8; line-height: 1.5; }
+    .divider { margin: 18px 0 0; color: #5a6680; font-weight: 700; }
+    input[type="file"] { padding: 12px; background: #fbfcfe; }
+    button.secondary { color: #2357d8; background: #e8efff; }
+    .summary ul { margin: 0; padding-left: 1.2em; line-height: 1.7; }
+    .summary .warnings { color: #7d4a00; }
+    .table-wrap { margin-top: 12px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #dde3ee; text-align: left; white-space: nowrap; }
+    th { background: #f4f7fb; }
   </style>
 </head>
 <body>
   <main>
-    <h1>組別設定</h1>
+    <h1>組別設定與匯入</h1>
     <p class="notice">請以 <a href="http://localhost">http://localhost</a> 開啟本頁；以區網 IP 開啟時無法設定組別</p>
     <p id="host-warning" class="warning" role="alert" hidden>目前不是從 localhost 開啟，無法寫入組別設定。</p>
     <section class="panel">
@@ -35,6 +47,32 @@
       <div id="group-list" class="group-list" aria-live="polite"></div>
       <button id="apply" type="button">套用組別</button>
       <p id="message" class="message" role="status" aria-live="polite"></p>
+    </section>
+    <section class="panel" aria-labelledby="import-title">
+      <h2 id="import-title">匯入學習單</h2>
+      <p id="import-current" class="status">讀取中…</p>
+      <p id="import-blocked" class="warning" role="alert" hidden></p>
+      <label for="import-file">上傳 xlsx 檔（5 MiB 以內）</label>
+      <input id="import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <button id="import-upload" type="button">讀取檔案</button>
+      <p class="divider">或</p>
+      <label for="import-link">貼上 Google 試算表連結（需設為「知道連結者可檢視」）</label>
+      <input id="import-link" type="url" inputmode="url" placeholder="https://docs.google.com/spreadsheets/d/...">
+      <button id="import-link-submit" type="button">讀取連結</button>
+      <div id="import-summary" class="summary" hidden>
+        <h3>請核對匯入內容</h3>
+        <ul id="import-summary-lines"></ul>
+        <ul id="import-warnings" class="warnings"></ul>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>題號</th><th>類型</th><th>空格</th><th>前綴</th></tr></thead>
+            <tbody id="import-rows"></tbody>
+          </table>
+        </div>
+        <button id="import-confirm" type="button">確認匯入</button>
+        <button id="import-cancel" type="button" class="secondary">取消</button>
+      </div>
+      <p id="import-message" class="message" role="status" aria-live="polite"></p>
     </section>
   </main>
   <script type="module" src="/teacher/app.js"></script>
