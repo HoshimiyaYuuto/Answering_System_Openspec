@@ -428,3 +428,7 @@ Invoke-RestMethod http://localhost:3000/api/teacher/guided-notes -WebSession $te
 ## 待補的公開題目格式
 
 `session.questions` 已由匯入寫入，但目前沒有端點讓學生端讀取題目。`add-buzz-in-submission` 須新增學生端讀取題目的端點並在此定義回應格式；格式不得包含儲存格位置、原始檔內容或試算表 ID。匯入模組目前提出的公開形狀為 `{ id, prompt, blanks: [{ index, prefix, prompt }] }`，由該 change 確認後才成為契約。
+
+## 待補的作答紀錄格式
+
+server 內部的作答紀錄與每題判定結果（含作廢、公平順位與老師改選）的格式約定見 [作答紀錄與判定結果](submission-record.md)。送出、結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點。
