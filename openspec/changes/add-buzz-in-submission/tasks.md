@@ -4,9 +4,9 @@
 
 ## 1. 契約與提交狀態模組
 
-- [ ] 1.1 更新 `docs/api-contract.md`：新增三個學生端點、`/api/events` 的 `studentId` 參數與 `submission` 事件、新錯誤代碼（`STUDENT_NOT_ENTERED`、`QUESTIONS_NOT_AVAILABLE`、`SUBMISSION_NOT_ALLOWED`、`QUESTION_NOT_FOUND`、`INVALID_ANSWER`、`ALREADY_SUBMITTED`）、檢查順序與隱私規則，並把「待補的公開題目格式」改為正式定義。驗證：逐項對照 design 第 1、2、6、7 節，確認無遺漏；之後各 task 的 API 測試須與契約範例一致。
-- [ ] 1.2 新增 `server/submissions.js` 與 `server/submissions.test.js`：純記憶體、同步的提交狀態（每組每題一筆、答案驗證與 trim、server UTC 時間、每題獨立順位、`status:'valid'`、內部 `listSubmissions()` 與狀態變更訂閱）。驗證：`node --test server/submissions.test.js`，涵蓋空白、200 字元邊界、題組缺空格、重複提交、順位獨立。
-- [ ] 1.3 在 `server/submissions.test.js` 加入並行測試：100 組同題同時提交，順位恰為 1 至 100；同組兩筆同時提交只有一筆成功；100 組 × 50 題連續提交後各題順位皆連續不重複。驗證：`node --test server/submissions.test.js`。
+- [x] 1.1 更新 `docs/api-contract.md`：新增三個學生端點、`/api/events` 的 `studentId` 參數與 `submission` 事件、新錯誤代碼（`STUDENT_NOT_ENTERED`、`QUESTIONS_NOT_AVAILABLE`、`SUBMISSION_NOT_ALLOWED`、`QUESTION_NOT_FOUND`、`INVALID_ANSWER`、`ALREADY_SUBMITTED`）、檢查順序與隱私規則，並把「待補的公開題目格式」改為正式定義。驗證：逐項對照 design 第 1、2、6、7 節，確認無遺漏；之後各 task 的 API 測試須與契約範例一致。
+- [x] 1.2 新增 `server/submissions.js` 與 `server/submissions.test.js`：純記憶體、同步的提交狀態（每組每題一筆、答案驗證與 trim、server UTC 時間、每題獨立順位、`status:'valid'`、內部 `listSubmissions()` 與狀態變更訂閱）。驗證：`node --test server/submissions.test.js`，涵蓋空白、200 字元邊界、題組缺空格、重複提交、順位獨立。
+- [x] 1.3 在 `server/submissions.test.js` 加入並行測試：100 組同題同時提交，順位恰為 1 至 100；同組兩筆同時提交只有一筆成功；100 組 × 50 題連續提交後各題順位皆連續不重複。驗證：`node --test server/submissions.test.js`。
 
 ## 2. 學生 API
 
