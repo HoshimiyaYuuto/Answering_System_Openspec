@@ -10,10 +10,10 @@
 
 ## 2. 學生 API
 
-- [ ] 2.1 在 `server/index.js` 新增 `GET /api/student/questions`（白名單投影、準備中 409、搶答中與已結束可讀），並新增 `server/buzz-in-api.test.js`。驗證：`node --test server/buzz-in-api.test.js`；手動：以 PowerShell 啟動 development server（已設定 `.env`），用 `Invoke-RestMethod "http://localhost:3000/api/student/questions?studentId=stu-aaaa1111"` 在準備中得 409、開始後得題目且不含題目層 `prompt` 與儲存格位置。
-- [ ] 2.2 在 `server/index.js` 新增 `POST /api/student/submissions`，依 design 第 1 節的檢查順序，成功只回 `{ questionId, submittedAt }`；在 `server/buzz-in-api.test.js` 補測試：六種錯誤代碼、檢查順序、成功回應不含順位。驗證：`node --test server/buzz-in-api.test.js`；手動：`Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -ContentType 'application/json' -Body '{"studentId":"stu-aaaa1111","questionId":1,"answers":["答案"]}'`，再送一次應得 `409 ALREADY_SUBMITTED`。
-- [ ] 2.3 在 `server/index.js` 新增 `GET /api/student/submissions`（任何階段、只回本組、不含順位）；在 `server/buzz-in-api.test.js` 補測試：同組另一個 `studentId` 取得相同結果、他組提交不出現在本組回應。驗證：`node --test server/buzz-in-api.test.js`；手動：以同組兩個 `studentId` 各呼叫一次，結果一致。
-- [ ] 2.4 在 `server/index.js` 更新 development 50 題種子（`id` 10、20、30、40、50 為 2 空格題組，其餘單題，皆含題目層 `prompt` 與 `blanks`）；在 `server/buzz-in-api.test.js` 補測試：development 啟動題數為 50 且形狀正確、production 為 0。驗證：`node --test server/buzz-in-api.test.js`。
+- [x] 2.1 在 `server/index.js` 新增 `GET /api/student/questions`（白名單投影、準備中 409、搶答中與已結束可讀），並新增 `server/buzz-in-api.test.js`。驗證：`node --test server/buzz-in-api.test.js`；手動：以 PowerShell 啟動 development server（已設定 `.env`），用 `Invoke-RestMethod "http://localhost:3000/api/student/questions?studentId=stu-aaaa1111"` 在準備中得 409、開始後得題目且不含題目層 `prompt` 與儲存格位置。
+- [x] 2.2 在 `server/index.js` 新增 `POST /api/student/submissions`，依 design 第 1 節的檢查順序，成功只回 `{ questionId, submittedAt }`；在 `server/buzz-in-api.test.js` 補測試：六種錯誤代碼、檢查順序、成功回應不含順位。驗證：`node --test server/buzz-in-api.test.js`；手動：`Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -ContentType 'application/json' -Body '{"studentId":"stu-aaaa1111","questionId":1,"answers":["答案"]}'`，再送一次應得 `409 ALREADY_SUBMITTED`。
+- [x] 2.3 在 `server/index.js` 新增 `GET /api/student/submissions`（任何階段、只回本組、不含順位）；在 `server/buzz-in-api.test.js` 補測試：同組另一個 `studentId` 取得相同結果、他組提交不出現在本組回應。驗證：`node --test server/buzz-in-api.test.js`；手動：以同組兩個 `studentId` 各呼叫一次，結果一致。
+- [x] 2.4 在 `server/index.js` 更新 development 50 題種子（`id` 10、20、30、40、50 為 2 空格題組，其餘單題，皆含題目層 `prompt` 與 `blanks`）；在 `server/buzz-in-api.test.js` 補測試：development 啟動題數為 50 且形狀正確、production 為 0。驗證：`node --test server/buzz-in-api.test.js`。
 
 ## 3. 組別限定即時同步
 

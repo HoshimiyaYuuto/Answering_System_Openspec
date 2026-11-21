@@ -11,6 +11,7 @@ import {
   parseGuidedNotes,
 } from './guided-notes-import.js';
 import { createTeacherAuth, TeacherAuthError } from './teacher-auth.js';
+import { createSubmissions } from './submissions.js';
 
 const TEACHER_COOKIE = 'teacher_session';
 
@@ -76,6 +77,7 @@ export function createApplication({
     return { id, prompt: blanks.map(({ prefix, prompt }) => `${prefix}${prompt}`).join(''), blanks };
   }) : [];
   const session = { phase: '準備中', questions: developmentQuestions, groups };
+  const submissions = createSubmissions();
   const guidedNotes = createGuidedNotesImport();
   const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
   const eventClients = new Set();
@@ -176,19 +178,26 @@ export function createApplication({
     response.json({ data: result.data });
   });
 
-  app.get('/api/student/questions', (request, response) => {
-    const studentId = request.query.studentId;
+  function lookupStudentEntry(studentId, response) {
     if (typeof studentId !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(studentId)) {
-      return response.status(400).json({ error: { code: 'INVALID_STUDENT_ID', message: 'studentId 格式無效。' } });
+      response.status(400).json({ error: { code: 'INVALID_STUDENT_ID', message: 'studentId 格式無效。' } });
+      return null;
     }
     const entry = session.groups.lookup(studentId, session.phase);
     if (entry.error) {
       const { status, ...error } = entry.error;
-      return response.status(status).json({ error });
+      response.status(status).json({ error });
+      return null;
     }
     if (!entry.data.valid) {
-      return response.status(403).json({ error: { code: 'STUDENT_NOT_ENTERED', message: '學生沒有有效進場紀錄。' } });
+      response.status(403).json({ error: { code: 'STUDENT_NOT_ENTERED', message: '學生沒有有效進場紀錄。' } });
+      return null;
     }
+    return entry.data;
+  }
+
+  app.get('/api/student/questions', (request, response) => {
+    if (!lookupStudentEntry(request.query.studentId, response)) return;
     if (session.phase === '準備中') {
       return response.status(409).json({ error: { code: 'QUESTIONS_NOT_AVAILABLE', message: '搶答開始後才能讀取題目。' } });
     }
@@ -196,6 +205,32 @@ export function createApplication({
       id,
       blanks: blanks.map(({ index, prefix, prompt }) => ({ index, prefix, prompt })),
     })) } });
+  });
+
+  app.post('/api/student/submissions', (request, response) => {
+    const entry = lookupStudentEntry(request.body?.studentId, response);
+    if (!entry) return;
+    if (session.phase !== '搶答中') {
+      return response.status(409).json({ error: { code: 'SUBMISSION_NOT_ALLOWED', message: '目前階段不允許提交答案。' } });
+    }
+    const question = session.questions.find(({ id }) => id === request.body?.questionId);
+    if (!question) {
+      return response.status(404).json({ error: { code: 'QUESTION_NOT_FOUND', message: '找不到指定題目。' } });
+    }
+    const result = submissions.submit({ questionId: question.id, groupId: entry.group.id, answers: request.body?.answers, blanksCount: question.blanks.length });
+    if (!result.ok) {
+      const status = result.code === 'INVALID_ANSWER' ? 400 : 409;
+      const message = result.code === 'INVALID_ANSWER' ? '答案格式無效。' : '此組已提交本題答案。';
+      return response.status(status).json({ error: { code: result.code, message } });
+    }
+    return response.status(200).json({ data: { questionId: result.submission.questionId, submittedAt: result.submission.submittedAt } });
+  });
+
+  app.get('/api/student/submissions', (request, response) => {
+    const entry = lookupStudentEntry(request.query.studentId, response);
+    if (!entry) return;
+    const ownSubmissions = submissions.listByGroup(entry.group.id).map(({ questionId, answers, submittedAt }) => ({ questionId, answers, submittedAt }));
+    return response.json({ data: { submissions: ownSubmissions } });
   });
 
   function guidedNotesPhaseGuard(_request, response, next) {
