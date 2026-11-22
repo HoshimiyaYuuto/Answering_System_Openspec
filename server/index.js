@@ -11,6 +11,7 @@ import {
   parseGuidedNotes,
 } from './guided-notes-import.js';
 import { createTeacherAuth, TeacherAuthError } from './teacher-auth.js';
+import { createSubmissions } from './submissions.js';
 
 const TEACHER_COOKIE = 'teacher_session';
 
@@ -54,6 +55,7 @@ export function createApplication({
   exposeTestErrorRoute = false,
   downloadGuidedNotesImpl = downloadGuidedNotes,
   teacherPassword = process.env.TEACHER_PASSWORD,
+  submissions = createSubmissions(),
   now,
 } = {}) {
   const app = express();
@@ -68,7 +70,14 @@ export function createApplication({
   app.use(express.json({ limit: '16kb' }));
   const isDevelopment = environment === 'development';
   const groups = createGroupsEntry({ seed: isDevelopment ? createDevelopmentGroupSeed() : [] });
-  const session = { phase: '準備中', questions: [], groups };
+  const developmentQuestions = isDevelopment ? Array.from({ length: 50 }, (_, index) => {
+    const id = index + 1;
+    const blanks = [10, 20, 30, 40, 50].includes(id)
+      ? [{ index: 0, prefix: '（1）', prompt: `第 ${id} 題第一空` }, { index: 1, prefix: '（2）', prompt: `第 ${id} 題第二空` }]
+      : [{ index: 0, prefix: '', prompt: `第 ${id} 題` }];
+    return { id, prompt: blanks.map(({ prefix, prompt }) => `${prefix}${prompt}`).join(''), blanks };
+  }) : [];
+  const session = { phase: '準備中', questions: developmentQuestions, groups };
   const guidedNotes = createGuidedNotesImport();
   const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
   const eventClients = new Set();
@@ -120,8 +129,31 @@ export function createApplication({
 
   function publishPhase() {
     const payload = JSON.stringify({ phase: session.phase, serverTime: new Date().toISOString() });
-    for (const response of eventClients) response.write(`event: phase\ndata: ${payload}\n\n`);
+    for (const client of eventClients) safeWrite(client.response, `event: phase\ndata: ${payload}\n\n`);
   }
+
+  function safeWrite(response, chunk) {
+    if (response.destroyed || response.writableEnded) return false;
+    try {
+      return response.write(chunk);
+    } catch {
+      for (const client of eventClients) {
+        if (client.response === response) eventClients.delete(client);
+      }
+      return false;
+    }
+  }
+
+  submissions.subscribe((submission) => {
+    const payload = JSON.stringify({ questionId: submission.questionId, answers: submission.answers, submittedAt: submission.submittedAt });
+    for (const client of eventClients) {
+      if (!client.studentId) continue;
+      const current = session.groups.lookup(client.studentId, session.phase);
+      if (current.data?.valid && current.data.group.id === submission.groupId) {
+        safeWrite(client.response, `event: submission\ndata: ${payload}\n\n`);
+      }
+    }
+  });
 
   app.get('/api/session', (_request, response) => {
     response.json({ data: sessionSummary() });
@@ -167,6 +199,61 @@ export function createApplication({
       return response.status(status).json({ error });
     }
     response.json({ data: result.data });
+  });
+
+  function lookupStudentEntry(studentId, response) {
+    if (typeof studentId !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(studentId)) {
+      response.status(400).json({ error: { code: 'INVALID_STUDENT_ID', message: 'studentId 格式無效。' } });
+      return null;
+    }
+    const entry = session.groups.lookup(studentId, session.phase);
+    if (entry.error) {
+      const { status, ...error } = entry.error;
+      response.status(status).json({ error });
+      return null;
+    }
+    if (!entry.data.valid) {
+      response.status(403).json({ error: { code: 'STUDENT_NOT_ENTERED', message: '學生沒有有效進場紀錄。' } });
+      return null;
+    }
+    return entry.data;
+  }
+
+  app.get('/api/student/questions', (request, response) => {
+    if (!lookupStudentEntry(request.query.studentId, response)) return;
+    if (session.phase === '準備中') {
+      return response.status(409).json({ error: { code: 'QUESTIONS_NOT_AVAILABLE', message: '搶答開始後才能讀取題目。' } });
+    }
+    return response.json({ data: { questions: session.questions.map(({ id, blanks }) => ({
+      id,
+      blanks: blanks.map(({ index, prefix, prompt }) => ({ index, prefix, prompt })),
+    })) } });
+  });
+
+  app.post('/api/student/submissions', (request, response) => {
+    const entry = lookupStudentEntry(request.body?.studentId, response);
+    if (!entry) return;
+    if (session.phase !== '搶答中') {
+      return response.status(409).json({ error: { code: 'SUBMISSION_NOT_ALLOWED', message: '目前階段不允許提交答案。' } });
+    }
+    const question = session.questions.find(({ id }) => id === request.body?.questionId);
+    if (!question) {
+      return response.status(404).json({ error: { code: 'QUESTION_NOT_FOUND', message: '找不到指定題目。' } });
+    }
+    const result = submissions.submit({ questionId: question.id, groupId: entry.group.id, answers: request.body?.answers, blanksCount: question.blanks.length });
+    if (!result.ok) {
+      const status = result.code === 'INVALID_ANSWER' ? 400 : 409;
+      const message = result.code === 'INVALID_ANSWER' ? '答案格式無效。' : '此組已提交本題答案。';
+      return response.status(status).json({ error: { code: result.code, message } });
+    }
+    return response.status(200).json({ data: { questionId: result.submission.questionId, submittedAt: result.submission.submittedAt } });
+  });
+
+  app.get('/api/student/submissions', (request, response) => {
+    const entry = lookupStudentEntry(request.query.studentId, response);
+    if (!entry) return;
+    const ownSubmissions = submissions.listByGroup(entry.group.id).map(({ questionId, answers, submittedAt }) => ({ questionId, answers, submittedAt }));
+    return response.json({ data: { submissions: ownSubmissions } });
   });
 
   function guidedNotesPhaseGuard(_request, response, next) {
@@ -251,6 +338,8 @@ export function createApplication({
   }
 
   app.get('/api/events', (request, response) => {
+    const studentId = request.query.studentId;
+    if (studentId !== undefined && !lookupStudentEntry(studentId, response)) return;
     response.status(200);
     response.set({
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -260,14 +349,15 @@ export function createApplication({
     });
     response.flushHeaders();
     response.write('retry: 3000\n\n');
-    eventClients.add(response);
+    const client = { response, ...(studentId !== undefined ? { studentId } : {}) };
+    eventClients.add(client);
 
     const heartbeat = setInterval(() => {
-      response.write(`event: heartbeat\ndata: ${JSON.stringify({ serverTime: new Date().toISOString() })}\n\n`);
+      safeWrite(response, `event: heartbeat\ndata: ${JSON.stringify({ serverTime: new Date().toISOString() })}\n\n`);
     }, 15_000);
-    request.on('close', () => {
+    response.on('close', () => {
       clearInterval(heartbeat);
-      eventClients.delete(response);
+      eventClients.delete(client);
     });
   });
 
@@ -300,10 +390,6 @@ export function createApplication({
   });
 
   if (isDevelopment) {
-    session.questions = Array.from({ length: 50 }, (_, index) => ({
-      id: index + 1,
-      prompt: `開發測試題目 ${index + 1}`,
-    }));
     app.post('/api/dev/phase/:phase', loopbackOnly, (request, response) => {
       const phases = ['準備中', '搶答中', '已結束'];
       if (!phases.includes(request.params.phase)) {
