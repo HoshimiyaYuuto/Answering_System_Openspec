@@ -43,6 +43,7 @@
     .confirm p { margin: 0; color: #7d1c13; font-weight: 700; }
     .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .header button { width: auto; margin-top: 0; min-height: 44px; }
+    .message.ok { color: #1d6b3a; }
   </style>
 </head>
 <body>
@@ -121,6 +122,14 @@
         <button id="import-cancel" type="button" class="secondary">取消</button>
       </div>
       <p id="import-message" class="message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="export-title">
+      <h2 id="export-title">匯出結果</h2>
+      <p id="export-description" class="status">活動結束後才能匯出。</p>
+      <button id="export-writeback" type="button" disabled>寫回 Google 試算表</button>
+      <button id="export-download" type="button" class="secondary" disabled>下載 xlsx</button>
+      <p id="export-message" class="message" role="status" aria-live="polite"></p>
     </section>
     </div>
   </main>

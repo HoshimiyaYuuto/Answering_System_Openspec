@@ -226,6 +226,54 @@ test('link import uses the injected download function', async () => {
   }
 });
 
+test('linked import keeps the spreadsheet id out of every teacher and student response', async () => {
+  const workbook = await fixture('02-official-group.xlsx');
+  const spreadsheetId = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+  const downloadGuidedNotesImpl = async () => ({ buffer: workbook, name: '雲端學習單', spreadsheetId });
+  const { server, url } = await startApp({ downloadGuidedNotesImpl });
+  try {
+    const preview = await postJson(url, '/api/teacher/guided-notes/preview/link', { url: sheetLink });
+    const confirmed = await postJson(url, '/api/teacher/guided-notes/confirm', { previewId: preview.body.data.previewId });
+    const status = await call(url, '/api/teacher/guided-notes');
+    const writeback = await call(url, '/api/teacher/guided-notes/writeback');
+    assert.equal(writeback.status, 200);
+    assert.equal(writeback.body.data.target, 'link');
+
+    await postJson(url, '/api/groups/generate', { count: 1 });
+    await call(url, '/api/student/entry', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studentId: 'stu-aaaa1111', groupId: 1 }),
+    });
+    await call(url, '/api/session/start', { method: 'POST' });
+    const studentQuestions = await call(url, '/api/student/questions?studentId=stu-aaaa1111', { anonymous: true });
+    assert.equal(studentQuestions.status, 200);
+    const session = await call(url, '/api/session', { anonymous: true });
+    for (const body of [preview.body, confirmed.body, status.body, writeback.body, studentQuestions.body, session.body]) {
+      assert.doesNotMatch(JSON.stringify(body), new RegExp(spreadsheetId));
+    }
+
+    await call(url, '/api/session/end', { method: 'POST' });
+  } finally {
+    await close(server);
+  }
+});
+
+test('uploading after a linked import removes the write-back target', async () => {
+  const workbook = await fixture('02-official-group.xlsx');
+  const downloadGuidedNotesImpl = async () => ({ buffer: workbook, name: '雲端學習單', spreadsheetId: '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789' });
+  const { server, url } = await startApp({ downloadGuidedNotesImpl });
+  try {
+    const preview = await postJson(url, '/api/teacher/guided-notes/preview/link', { url: sheetLink });
+    await postJson(url, '/api/teacher/guided-notes/confirm', { previewId: preview.body.data.previewId });
+    assert.equal((await call(url, '/api/teacher/guided-notes/writeback')).body.data.target, 'link');
+    await importAndConfirm(url, '01-official-single.xlsx');
+    assert.equal((await call(url, '/api/teacher/guided-notes/writeback')).body.data.target, 'file');
+  } finally {
+    await close(server);
+  }
+});
+
 test('link errors are returned in the contract envelope', async () => {
   const downloadGuidedNotesImpl = async (link) => {
     if (!String(link).startsWith('https://docs.google.com/')) {

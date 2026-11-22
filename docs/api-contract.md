@@ -528,6 +528,85 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -Co
 Invoke-RestMethod "http://localhost:3000/api/student/submissions?studentId=stu-aaaa1111"
 ```
 
+## Guided Notes 匯出
+
+活動「已結束」後，把每題成功答案寫回 Guided Notes。成功答案為 `computeResults()` 判定的勝者那一筆作答（見 [作答紀錄與判定結果](submission-record.md)），以 `questionId` + `winner.rank` 查回答案；無勝者的題目不寫入。三個端點都需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`；匯出不改變作答、題目或階段。
+
+每格寫入內容：前綴與答案格分離時（例如 G5 為「（1）」、H5 空白）只寫答案到 H5；前綴位於合併填答區時（答案位置等於前綴格）寫「前綴＋答案」；沒有前綴時只寫答案。答案一律以純文字寫入，「=1+1」不會被當成公式。
+
+### `GET /api/teacher/guided-notes/export`
+
+下載以原匯入檔為底、答案寫在匯入時保存的答案位置的 xlsx。上傳與連結兩種來源都可用，也是寫回失敗時的備援。
+
+- 成功：`200`，`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，`Content-Disposition: attachment; filename="guided-notes-answers.xlsx"; filename*=UTF-8''<原檔名去掉 .xlsx>（搶答結果）.xlsx`。
+- 錯誤一律為 JSON envelope，所以前端以 `fetch` 取得後再觸發下載。
+- 下載的 xlsx 由 exceljs 重新產生，條件式格式、圖片等少數格式可能遺失。
+
+### `POST /api/teacher/guided-notes/writeback`
+
+只適用於以 Google 試算表連結匯入。以服務帳號呼叫 Sheets API `values.batchUpdate`（`valueInputOption: RAW`）寫入原線上試算表，只改答案儲存格的值。依序檢查，任一步失敗就不寫入：
+
+1. 老師登入，否則 `401 TEACHER_AUTH_REQUIRED`
+2. 階段為「已結束」，否則 `409 EXPORT_NOT_ALLOWED`
+3. 已匯入學習單，否則 `409 NO_GUIDED_NOTES`
+4. 以連結匯入，否則 `409 GUIDED_NOTES_NOT_LINK`
+5. server 已設定服務帳號，否則 `503 SHEET_NOT_CONFIGURED`
+6. 沒有其他寫回正在進行，否則 `409 WRITEBACK_IN_PROGRESS`
+7. 沒有任何成功答案時直接回 `{ "writtenCells": 0, "remapped": false }`，不連 Google
+8. 以公開連結重新讀取線上試算表，用匯入時同一套表頭與題號規則重新定位（O6）；讀不到回 `502 SHEET_CHECK_FAILED`，題號集合、空格數不同或表頭無法辨識回 `409 SHEET_MODIFIED`
+9. 寫入新位置，前綴沿用匯入時的值
+
+成功：
+
+```json
+{ "data": { "writtenCells": 6, "remapped": true } }
+```
+
+`remapped` 為 `true` 表示線上試算表的版面在匯入後有變動（例如插入一列），答案已依題號重新對位。第二次寫回不會清除本次無人作答、上一次留下的答案。
+
+### `GET /api/teacher/guided-notes/writeback`
+
+查詢寫回設定，任何階段可呼叫：
+
+```json
+{ "data": { "configured": true, "serviceAccountEmail": "writer@project.iam.gserviceaccount.com", "target": "link" } }
+```
+
+`target` 為 `link`（以連結匯入，可寫回）、`file`（上傳，只能下載）或 `null`（尚未匯入）。服務帳號信箱不是機密，老師需要把試算表共用給它；未設定時 `configured` 為 `false`、`serviceAccountEmail` 為 `null`。回應不含試算表 ID。
+
+### 匯出錯誤狀態
+
+所有寫回錯誤的訊息都會提示可改用「下載 xlsx」。回應與 log 不含金鑰、存取權杖、答案、試算表內容或 Google 原始錯誤內容；log 只記錄寫入格數與錯誤代碼。
+
+| HTTP | Code | 用途 |
+| --- | --- | --- |
+| 409 | `EXPORT_NOT_ALLOWED` | 活動尚未結束 |
+| 409 | `NO_GUIDED_NOTES` | 尚未匯入學習單 |
+| 409 | `GUIDED_NOTES_NOT_LINK` | 上傳的 xlsx 沒有線上試算表可寫回 |
+| 503 | `SHEET_NOT_CONFIGURED` | server 未設定服務帳號 |
+| 409 | `WRITEBACK_IN_PROGRESS` | 前一次寫回尚未完成 |
+| 502 | `SHEET_CHECK_FAILED` | 寫回前無法重新讀取線上試算表（例如已取消「知道連結者可檢視」） |
+| 409 | `SHEET_MODIFIED` | 線上試算表的題號或空格數與匯入時不同，訊息指出第一個差異 |
+| 503 | `SHEET_AUTH_FAILED` | 服務帳號認證失敗 |
+| 503 | `SHEET_API_DISABLED` | 服務帳號所屬專案未啟用 Sheets API |
+| 422 | `SHEET_NOT_EDITABLE` | 服務帳號沒有編輯權限，訊息包含應共用的服務帳號信箱 |
+| 422 | `SHEET_NOT_FOUND` | 找不到試算表 |
+| 422 | `SHEET_NOT_NATIVE` | 雲端上的檔案仍是 xlsx，需先「儲存為 Google 試算表」 |
+| 422 | `SHEET_TAB_NOT_FOUND` | 找不到要寫入的工作表 |
+| 502 | `SHEET_UNAVAILABLE` | Google 限流、5xx、網路錯誤或逾時 |
+
+與 SpecKit 組 006 的差異（使用者看到的行為一致）：端點放在 `/api/teacher/guided-notes/` 下、狀態類錯誤用 409、沒有 `force` 參數（題號對不上一律拒絕寫入）。
+
+### PowerShell 範例
+
+先登入並取得 `$teacher`（見「老師登入」），活動結束後：
+
+```powershell
+Invoke-RestMethod http://localhost:3000/api/teacher/guided-notes/writeback -WebSession $teacher
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/writeback -WebSession $teacher
+Invoke-WebRequest http://localhost:3000/api/teacher/guided-notes/export -WebSession $teacher -OutFile answers.xlsx
+```
+
 ## 待補的作答紀錄格式
 
 server 內部的作答紀錄與每題判定結果（含作廢、公平順位與老師改選）的格式約定見 [作答紀錄與判定結果](submission-record.md)。送出、結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點。
