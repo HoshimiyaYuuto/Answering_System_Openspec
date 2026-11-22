@@ -56,6 +56,7 @@ export function createApplication({
   downloadGuidedNotesImpl = downloadGuidedNotes,
   teacherPassword = process.env.TEACHER_PASSWORD,
   submissions = createSubmissions(),
+  logger = console,
   now,
 } = {}) {
   const app = express();
@@ -332,7 +333,7 @@ export function createApplication({
   });
 
   if (exposeTestErrorRoute) {
-    app.get('/api/__test__/error', () => {
+    app.all('/api/__test__/error', () => {
       throw new Error('test-only-secret-marker');
     });
   }
@@ -409,7 +410,7 @@ export function createApplication({
     });
   });
 
-  app.use((error, _request, response, _next) => {
+  app.use((error, request, response, _next) => {
     if (error.type === 'entity.parse.failed') {
       return response.status(400).json({
         error: { code: 'INVALID_JSON', message: 'JSON 格式錯誤或請求欄位無效。' },
@@ -420,6 +421,8 @@ export function createApplication({
         error: { code: 'BODY_TOO_LARGE', message: 'JSON body 超過 16 KiB 上限。' },
       });
     }
+    // 只記方法與不含 query string 的路徑；body、query 與 cookie 可能含密碼、token 或答案，不記錄
+    logger.error(`[${new Date().toISOString()}] ${request.method} ${request.path} 500 INTERNAL_ERROR\n${error?.stack ?? String(error)}`);
     response.status(500).json({
       error: { code: 'INTERNAL_ERROR', message: '伺服器發生未預期錯誤。' },
     });

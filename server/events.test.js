@@ -137,8 +137,65 @@ test('unknown API paths return the documented JSON error envelope', async () => 
   assert.doesNotMatch(JSON.stringify(body), /stack|secret|Error:/i);
 });
 
+function createRecordingLogger() {
+  const lines = [];
+  return { lines, error: (...args) => lines.push(args.map(String).join(' ')) };
+}
+
+async function withErrorServer(logger, run) {
+  const errorServer = createApplication({ environment: 'test', exposeTestErrorRoute: true, logger }).listen(0, '127.0.0.1');
+  await new Promise((resolve) => errorServer.once('listening', resolve));
+  try {
+    await run(`http://127.0.0.1:${errorServer.address().port}`);
+  } finally {
+    await new Promise((resolve) => errorServer.close(resolve));
+  }
+}
+
+test('unexpected errors are logged with method, path and stack', async () => {
+  const logger = createRecordingLogger();
+  await withErrorServer(logger, async (url) => {
+    const response = await fetch(`${url}/api/__test__/error`);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: { code: 'INTERNAL_ERROR', message: '伺服器發生未預期錯誤。' } });
+  });
+  assert.equal(logger.lines.length, 1);
+  assert.match(logger.lines[0], /^\[\d{4}-\d{2}-\d{2}T[^\]]+Z\] GET \/api\/__test__\/error 500 INTERNAL_ERROR\n/);
+  assert.match(logger.lines[0], /Error: test-only-secret-marker\n\s+at /);
+});
+
+test('error log excludes query string, cookies and body', async () => {
+  const logger = createRecordingLogger();
+  await withErrorServer(logger, async (url) => {
+    const response = await fetch(`${url}/api/__test__/error?studentId=stu-secret-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: 'teacher_session=cookie-secret' },
+      body: JSON.stringify({ password: 'body-secret' }),
+    });
+    assert.equal(response.status, 500);
+  });
+  assert.equal(logger.lines.length, 1);
+  assert.match(logger.lines[0], /POST \/api\/__test__\/error 500/);
+  assert.doesNotMatch(logger.lines[0], /stu-secret-query|cookie-secret|body-secret/);
+});
+
+test('client errors are not logged', async () => {
+  const logger = createRecordingLogger();
+  await withErrorServer(logger, async (url) => {
+    const json = { 'Content-Type': 'application/json' };
+    const responses = await Promise.all([
+      fetch(`${url}/api/groups`, { method: 'PUT', headers: json, body: '{bad json' }),
+      fetch(`${url}/api/groups`, { method: 'PUT', headers: json, body: JSON.stringify({ text: 'x'.repeat(17 * 1024) }) }),
+      fetch(`${url}/api/not-a-route`),
+      fetch(`${url}/api/session/start`, { method: 'POST' }),
+    ]);
+    assert.deepEqual(responses.map(({ status }) => status), [400, 413, 404, 401]);
+  });
+  assert.deepEqual(logger.lines, []);
+});
+
 test('unexpected errors return a sanitized JSON error envelope', async () => {
-  const errorServer = createApplication({ environment: 'test', exposeTestErrorRoute: true }).listen(0, '127.0.0.1');
+  const errorServer = createApplication({ environment: 'test', exposeTestErrorRoute: true, logger: createRecordingLogger() }).listen(0, '127.0.0.1');
   await new Promise((resolve) => errorServer.once('listening', resolve));
   try {
     const response = await fetch(`http://127.0.0.1:${errorServer.address().port}/api/__test__/error`);
