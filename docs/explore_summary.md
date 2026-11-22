@@ -1,10 +1,12 @@
 # 課堂搶答系統｜OpenSpec Explore 結論
 
-版本 v0.3｜2026-11-22｜OpenSpec 組｜用途：交給 codex 執行 `openspec propose` 與 `apply` 的唯一輸入
+版本 v0.4｜2026-11-22｜OpenSpec 組｜用途：交給 codex 執行 `openspec propose` 與 `apply` 的唯一輸入
 
 > v0.2 變更：對齊共同契約 v0.6（D12 改為直接讀寫線上 Google Sheets、D13 增為 8 欄、D14／D16 補充、新增 D25）；補上各項決策的狀態（Confirmed／Default）與 SpecKit 組 2026-11-20 對照表帶來的待回覆事項；更新第 5、8、9、10、11 節。
 >
 > v0.3 變更：老師密碼登入（D18、O5）與教師控制台由 `add-teacher-console` 實作（PR 待合併），更新 D18、O5、能力表與 change 順序；`add-buzz-in-submission` 的開始搶答須先登入且至少一組一題。
+>
+> v0.4 變更：`add-buzz-in-submission` 已合併並歸檔；`teacher-console` 已歸檔；新增 `question-results`（`add-results-computation`，教師端成員，已合併）與 `student-answering-ui`（規劃文件已備），並把學生結果頁獨立為 `student-results`；更新第 5、11 節。
 
 ## 0. 給 codex 的工作規則
 
@@ -83,8 +85,10 @@
 | api-contract-and-session-lifecycle | API 契約、階段狀態機、全員同步（2 秒內）、統一錯誤格式（已完成並歸檔） | P0 | 學生端成員 | 已歸檔 |
 | groups-and-entry | 組別設定、學生進場、換組、重連、靜態檔案提供 | P0 | 學生端成員（API 與學生端）；教師端成員（組別設定畫面） | 已歸檔（PR #2 合併進 feat/student-quiz） |
 | guided-notes-import | 匯入、摘要確認、動態辨識 | P0 | 教師端成員 | 已歸檔 |
-| buzz-in-submission | 送出、鎖定、server 排序、競態處理、題目資料結構 | P0 | 學生端成員 | 規劃文件已 commit（`feat/buzz-in-submission`），待 apply |
-| student-ui | 學生端所有畫面（第 6 節） | P0 | 學生端成員 | 未開始 |
+| buzz-in-submission | 送出、鎖定、server 排序、競態處理、題目資料結構 | P0 | 學生端成員 | 已歸檔（`add-buzz-in-submission`，PR #8 已合併） |
+| student-answering-ui | 搶答中作答畫面：題號格、作答、草稿、送出、鎖定、同組同步、重連（第 6 節第 4、5、6、7、8、10 項） | P0 | 學生端成員 | 規劃文件已備（`add-student-answering-ui`），待 apply |
+| student-results | 結束後結果頁：各題搶答成功組別與答案、自己組各題順位（第 6 節第 9 項） | P0 | 學生端成員 | 未開始（依賴 question-results） |
+| question-results | `computeResults()` 純函式：由作答紀錄推導每題判定結果（先到先得、過濾作廢；公平順位與老師改選之後各自加入），供結果頁、監看、匯出共用 | P0 | 教師端成員 | 實作完成，已合併，待歸檔（`add-results-computation`） |
 | teacher-monitoring-results | 監看、結果（老師登入已由 teacher-auth／teacher-console 完成，不再屬於此能力） | P0 | 教師端成員（資料來源為 server） | 未開始 |
 | export-guided-notes | 寫回 xlsx | P0 | 教師端成員 | 未開始（須依 D12 v0.6 改為 Google Sheets 寫回，見 O6） |
 | countdown | 倒數與自動結束 | P1 | 學生端成員（server 計時、學生端顯示）；教師端成員（老師設定） | 未開始 |
@@ -94,8 +98,8 @@
 | question-groups | 題組匯入與整題送出（D10） | P2 | 教師端成員（匯入）；學生端成員（送出與學生端） | 匯入端已含在 guided-notes-import；送出端未開始 |
 | fair-ranking | D14 公平順位 | P2 | 學生端成員 | 未開始（含 D25 連鎖重判） |
 | projection-board | D16 投影看板 | P2 | 教師端成員 | 未開始 |
-| teacher-auth | D18 老師密碼驗證，取代各寫入端點的 loopback 檢查（O5） | P0 | 教師端成員 | 實作完成，PR 待合併（`add-teacher-console`，`feat/teacher-console`） |
-| teacher-console | 教師控制台：登入畫面、活動狀態即時同步、開始與結束搶答（結束需確認）、組別與匯入依階段鎖定 | P0 | 教師端成員 | 實作完成，PR 待合併（`add-teacher-console`） |
+| teacher-auth | D18 老師密碼驗證，取代各寫入端點的 loopback 檢查（O5） | P0 | 教師端成員 | 已歸檔（`add-teacher-console`） |
+| teacher-console | 教師控制台：登入畫面、活動狀態即時同步、開始與結束搶答（結束需確認）、組別與匯入依階段鎖定 | P0 | 教師端成員 | 已歸檔（`add-teacher-console`） |
 
 ## 6. 學生端需求（核心）
 
@@ -167,12 +171,15 @@
 1. ✅ `add-api-contract-and-server-skeleton`
 2. ✅ `add-groups-and-student-entry`
 3. ✅ `add-guided-notes-import`（task 5.3 延後，待 `add-export-guided-notes` 一併處理）
-4. 🔶 `add-buzz-in-submission`（規劃文件已 commit，待 apply；須在 `add-teacher-console` 合併後再開始）：**只做 server**——題目讀取（供學生端）、送出、鎖定、server 排序、競態處理、每組私有推送；不含畫面。
-5. ⬜ `add-student-answering-ui`：學生端題號格、作答、草稿、送出、鎖定同步（依 4 的 API）。
-6. ⬜ `add-student-results`：結束後結果頁。
-7. ✅ `add-teacher-console`（含老師登入 D18 與開始／結束搶答；教師端成員已實作，PR 待合併，取代原本規劃的 `add-teacher-auth`）。
+4. ✅ `add-buzz-in-submission`（已合併並歸檔；後續小修：`submissions.clear()` 不清訂閱者、`createApplication` 的 `now` 轉為 Date 傳給 `createSubmissions`）：**只做 server**——題目讀取（供學生端）、送出、鎖定、server 排序、競態處理、每組私有推送；不含畫面。
+5. 🔶 `add-student-answering-ui`：學生端題號格、作答、草稿、送出、鎖定同步（依 4 的 API；規劃文件已備，待 apply；只動 `public/student/`，不含結果頁）。
+5a. ✅ `add-results-computation`：`server/results.js` 的 `computeResults()` 第一版（教師端成員，已合併，待歸檔）。
+6. ⬜ `add-student-results`：結束後結果頁（依賴 5a 的 `computeResults()` 與 server 端點公開結果）。
+7. ✅ `add-teacher-console`（含老師登入 D18 與開始／結束搶答；教師端成員實作，已歸檔，取代原本規劃的 `add-teacher-auth`）。
 8. 教師端與資料進出：`add-teacher-monitoring`（監看與結果，登入已不屬於它）、`add-export-guided-notes`（含 Google Sheets 寫回，O6）。
 9. P1：countdown、csv-export（8 欄）、void-submission、challenge-override。
 10. P2：question-groups（送出端）、fair-ranking（含 D25）、projection-board。
 
-每個 change 的 proposal 需寫明 Why、What Changes、Impact，tasks 需小到可獨立驗證。完成 3 之前不要開 4 的 propose，避免題目格式變動。
+每個 change 的 proposal 需寫明 Why、What Changes、Impact，tasks 需小到可獨立驗證。
+
+註：D20 組數上限本組主張 100（真實課堂曾有 64 組），尚未與 SpecKit 組統一；各 change 的測試與文件請不要寫「已統一為 50」。
