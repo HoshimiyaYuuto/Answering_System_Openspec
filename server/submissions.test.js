@@ -66,6 +66,18 @@ test('notifies subscribers and supports unsubscribe', () => {
   assert.equal(received[0].rank, 1);
 });
 
+test('a failing subscriber does not affect storage, submit result, or other subscribers', () => {
+  const store = makeStore();
+  let notified = false;
+  store.subscribe(() => { throw new Error('subscriber failure'); });
+  store.subscribe(() => { notified = true; });
+
+  const result = submit(store, 1, 1);
+  assert.equal(result.ok, true);
+  assert.equal(notified, true);
+  assert.equal(store.listSubmissions().length, 1);
+});
+
 test('assigns sequential ranks for 100 concurrent groups on one question', async () => {
   const store = makeStore();
   const results = await Promise.all(Array.from({ length: 100 }, (_, index) => Promise.resolve().then(() => submit(store, 1, index + 1))));

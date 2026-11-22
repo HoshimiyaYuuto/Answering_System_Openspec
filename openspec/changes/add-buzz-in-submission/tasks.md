@@ -17,8 +17,8 @@
 
 ## 3. 組別限定即時同步
 
-- [ ] 3.1 在 `server/index.js` 讓 `GET /api/events` 支援可選 `studentId`：驗證失敗回標準錯誤、成功則保存連線與 `studentId`，事件送出時才查詢目前組別，連線關閉時移除；新增 `server/buzz-in-events.test.js`。驗證：`node --test server/buzz-in-events.test.js`，涵蓋無參數行為不變、無效 `studentId` 被拒、關閉連線被釋放、準備中換組後事件送到新組。
-- [ ] 3.2 在 `server/index.js` 讓成功提交時發出 `submission` 事件（內容 `{ questionId, answers, submittedAt }`，不含順位）給同組連線；在 `server/buzz-in-events.test.js` 補測試：同組收到、他組與無參數連線什麼都沒收到、公開 `/api/session` 與 `phase` 事件內容不變、2 秒內送達。驗證：`node --test server/buzz-in-events.test.js`；手動：見 4.2。
+- [x] 3.1 在 `server/index.js` 讓 `GET /api/events` 支援可選 `studentId`：驗證失敗回標準錯誤、成功則保存連線與 `studentId`，事件送出時才查詢目前組別，連線關閉時移除；新增 `server/buzz-in-events.test.js`。驗證：`node --test server/buzz-in-events.test.js`，涵蓋無參數行為不變、無效 `studentId` 被拒、關閉連線被釋放、準備中換組後事件送到新組。
+- [x] 3.2 在 `server/index.js` 讓成功提交時發出 `submission` 事件（內容 `{ questionId, answers, submittedAt }`，不含順位）給同組連線；在 `server/buzz-in-events.test.js` 補測試：同組收到、他組與無參數連線什麼都沒收到、公開 `/api/session` 與 `phase` 事件內容不變、2 秒內送達。驗證：`node --test server/buzz-in-events.test.js`；手動：見 4.2。
 
 ## 4. 負載與整合驗證
 

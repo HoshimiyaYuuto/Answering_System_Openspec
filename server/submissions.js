@@ -41,7 +41,13 @@ export function createSubmissions({ now = () => new Date() } = {}) {
     nextRankByQuestion.set(questionId, rank);
     submissions.push(submission);
     validByQuestionAndGroup.set(key, submission);
-    for (const listener of listeners) listener({ ...submission, answers: [...submission.answers] });
+    for (const listener of listeners) {
+      try {
+        listener({ ...submission, answers: [...submission.answers] });
+      } catch {
+        // A subscriber failure must not undo or hide a stored submission.
+      }
+    }
     return { ok: true, submission: { ...submission, answers: [...submission.answers] } };
   }
 

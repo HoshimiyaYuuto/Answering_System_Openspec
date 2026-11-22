@@ -129,8 +129,31 @@ export function createApplication({
 
   function publishPhase() {
     const payload = JSON.stringify({ phase: session.phase, serverTime: new Date().toISOString() });
-    for (const response of eventClients) response.write(`event: phase\ndata: ${payload}\n\n`);
+    for (const client of eventClients) safeWrite(client.response, `event: phase\ndata: ${payload}\n\n`);
   }
+
+  function safeWrite(response, chunk) {
+    if (response.destroyed || response.writableEnded) return false;
+    try {
+      return response.write(chunk);
+    } catch {
+      for (const client of eventClients) {
+        if (client.response === response) eventClients.delete(client);
+      }
+      return false;
+    }
+  }
+
+  submissions.subscribe((submission) => {
+    const payload = JSON.stringify({ questionId: submission.questionId, answers: submission.answers, submittedAt: submission.submittedAt });
+    for (const client of eventClients) {
+      if (!client.studentId) continue;
+      const current = session.groups.lookup(client.studentId, session.phase);
+      if (current.data?.valid && current.data.group.id === submission.groupId) {
+        safeWrite(client.response, `event: submission\ndata: ${payload}\n\n`);
+      }
+    }
+  });
 
   app.get('/api/session', (_request, response) => {
     response.json({ data: sessionSummary() });
@@ -315,6 +338,8 @@ export function createApplication({
   }
 
   app.get('/api/events', (request, response) => {
+    const studentId = request.query.studentId;
+    if (studentId !== undefined && !lookupStudentEntry(studentId, response)) return;
     response.status(200);
     response.set({
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -324,14 +349,15 @@ export function createApplication({
     });
     response.flushHeaders();
     response.write('retry: 3000\n\n');
-    eventClients.add(response);
+    const client = { response, ...(studentId !== undefined ? { studentId } : {}) };
+    eventClients.add(client);
 
     const heartbeat = setInterval(() => {
-      response.write(`event: heartbeat\ndata: ${JSON.stringify({ serverTime: new Date().toISOString() })}\n\n`);
+      safeWrite(response, `event: heartbeat\ndata: ${JSON.stringify({ serverTime: new Date().toISOString() })}\n\n`);
     }, 15_000);
-    request.on('close', () => {
+    response.on('close', () => {
       clearInterval(heartbeat);
-      eventClients.delete(response);
+      eventClients.delete(client);
     });
   });
 
