@@ -528,6 +528,67 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -Co
 Invoke-RestMethod "http://localhost:3000/api/student/submissions?studentId=stu-aaaa1111"
 ```
 
+## 老師監看
+
+### `GET /api/teacher/monitor`
+
+需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`。任何階段都可查詢，查詢不改變任何狀態。名次、勝者與 `settled` 一律取自 server 的 `computeResults()`（見 [作答紀錄與判定結果](submission-record.md)），前端不自行排名。
+
+```json
+{
+  "data": {
+    "phase": "搶答中",
+    "groupCount": 3,
+    "questions": [
+      {
+        "id": 1,
+        "prompt": "水的化學式是",
+        "settled": true,
+        "winner": { "groupId": 1, "groupName": "第 1 組", "answers": ["H2O"] },
+        "winnerSource": "arrival",
+        "submittedCount": 2,
+        "entries": [
+          { "groupId": 1, "groupName": "第 1 組", "rank": 1, "status": "valid", "place": 1, "answers": ["H2O"], "submittedAt": "2026-11-14T00:00:00.000Z" },
+          { "groupId": 2, "groupName": "第 2 組", "rank": 2, "status": "valid", "place": 2, "answers": ["水"], "submittedAt": "2026-11-14T00:00:01.000Z" }
+        ],
+        "notSubmitted": [{ "groupId": 3, "groupName": "第 3 組" }]
+      }
+    ]
+  }
+}
+```
+
+| 欄位 | 說明 |
+| --- | --- |
+| `questions` | 依題號排序，每題都會出現（包含無人作答） |
+| `prompt` | 題目層敘述（只給老師；學生端題目不含此欄） |
+| `settled` | `false` 表示判定中（公平順位啟用後才會出現），此時 `winner` 為 `null` |
+| `winner` | 勝者組別與該筆答案；無有效作答或判定中為 `null` |
+| `winnerSource` | `arrival`／`fair`／`override`；`winner` 為 `null` 時為 `null` |
+| `submittedCount` | 該題有效作答數 |
+| `entries` | 該題所有作答（有效與已作廢），依 `rank` 排序；`status` 為 `valid` 或 `voided`，已作廢的 `place` 為 `null` |
+| `notSubmitted` | 該題沒有任何作答的組別，依組別 id 排序 |
+
+組別已不存在時組名顯示為 `組 <id>`。
+
+```powershell
+Invoke-RestMethod http://localhost:3000/api/teacher/monitor -WebSession $teacher | ConvertTo-Json -Depth 6
+```
+
+### `GET /api/events?role=teacher` 的監看通知
+
+老師控制台以 `role=teacher` 連線，瀏覽器會自動帶上老師登入 cookie。未登入回 `401 TEACHER_AUTH_REQUIRED`，不建立 SSE 連線；其他 `role` 值視為一般公開連線。
+
+成功連線除既有的 `phase` 與 `heartbeat` 外，任何一組成功送出後都會收到：
+
+```text
+event: monitor
+data: {"serverTime":"2026-11-14T00:00:00.000Z"}
+
+```
+
+事件只表示「監看資料已改變」，不含作答內容，老師端收到後重新呼叫 `GET /api/teacher/monitor`。每次送出時才檢查登入狀態，老師登出後同一條連線不再收到 `monitor`。學生連線（`studentId`）與未帶參數的公開連線都不會收到 `monitor`。
+
 ## 待補的作答紀錄格式
 
 server 內部的作答紀錄與每題判定結果（含作廢、公平順位與老師改選）的格式約定見 [作答紀錄與判定結果](submission-record.md)。送出、結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點。
