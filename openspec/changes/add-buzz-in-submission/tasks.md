@@ -22,7 +22,7 @@
 
 ## 4. 負載與整合驗證
 
-- [ ] 4.1 擴充 `server/capacity-check.js`：新增送出場景，100 組 × 50 題經 HTTP 全部送出（先讓 100 個 `studentId` 進場並開始搶答），確認全部成功、每題順位無重複（以 `listSubmissions()` 檢查，不經學生 API），並印出總耗時。門檻：5,000 筆在本機 10 秒內完成；首次量測後依實際結果與測試機器調整，並把理由與數字寫入驗證紀錄。驗證：`npm run check:capacity`。
+- [x] 4.1 擴充 `server/capacity-check.js`：新增送出場景，100 組 × 50 題經 HTTP 全部送出（先讓 100 個 `studentId` 進場並開始搶答），確認全部成功、每題順位無重複（以 `listSubmissions()` 檢查，不經學生 API），並印出總耗時。門檻：5,000 筆在本機 10 秒內完成；首次量測後依實際結果與測試機器調整，並把理由與數字寫入驗證紀錄。驗證：`npm run check:capacity`。
 - [ ] 4.2 新增 `docs/verification/add-buzz-in-submission.md`，記錄環境（作業系統、Node 版本、PowerShell）與手動步驟。需包含：`$env:NODE_ENV='development'; npm start`；用 `Invoke-RestMethod -Method Put` 讓 `stu-aaaa1111`、`stu-cccc3333`（組 1）與 `stu-bbbb2222`（組 2）進場；開三個 PowerShell 視窗各執行 `curl.exe -N "http://localhost:3000/api/events?studentId=..."`（組 1 兩台、組 2 一台），另開第四個視窗不帶參數；先登入（`Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/login -ContentType 'application/json' -Body '{"password":"<TEACHER_PASSWORD>"}' -SessionVariable teacher`），再以 `Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSession $teacher` 開始搶答（development 種子已有組別與題目），結束活動同理使用 `/api/session/end`；開始後以組 1 提交題 1，確認只有組 1 兩個視窗出現 `submission` 事件、組 2 與公開視窗沒有；再以組 2 提交同題，兩邊互不影響；提交題 10（題組）缺一個空格得 `400 INVALID_ANSWER`；結束活動後再提交得 `409 SUBMISSION_NOT_ALLOWED`，但 `GET /api/student/submissions` 仍可讀取。
 - [ ] 4.3 執行 `npm test` 與 `npm run check:capacity`，把結果與未測項目補進驗證紀錄。驗證：兩個指令皆通過；Codex 沙盒無法執行時，由使用者在本機執行並記錄，不得宣稱通過。
 

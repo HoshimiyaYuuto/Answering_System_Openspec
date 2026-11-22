@@ -55,6 +55,7 @@ export function createApplication({
   exposeTestErrorRoute = false,
   downloadGuidedNotesImpl = downloadGuidedNotes,
   teacherPassword = process.env.TEACHER_PASSWORD,
+  submissions = createSubmissions(),
   now,
 } = {}) {
   const app = express();
@@ -77,7 +78,6 @@ export function createApplication({
     return { id, prompt: blanks.map(({ prefix, prompt }) => `${prefix}${prompt}`).join(''), blanks };
   }) : [];
   const session = { phase: '準備中', questions: developmentQuestions, groups };
-  const submissions = createSubmissions();
   const guidedNotes = createGuidedNotesImport();
   const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
   const eventClients = new Set();
