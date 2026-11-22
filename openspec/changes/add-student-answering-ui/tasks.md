@@ -26,8 +26,8 @@
 
 ## 5. 即時同步與重連
 
-- [ ] 5.1 修改 `public/student/app.js`：進場成功與重新整理恢復後，關閉舊連線並建立 `EventSource('/api/events?studentId=...')`；階段事件與心跳行為不變；換組或進場失效時關閉；`error` 時依 `getEventErrorNextStep` 處理（CLOSED 時重新確認進場）。驗證：手動——學生進場後，開發者工具的 Network 分頁看到帶 studentId 的事件連線；重啟 server 後頁面回到選組畫面並說明進場狀態失效。
-- [ ] 5.2 修改 `public/student/app.js`：收到 `submission` 事件時以 `applySubmission` 更新本組作答並鎖定畫面；重新連線成功（`open`）後重新讀取階段與本組作答。驗證：手動——兩個瀏覽器同一組，A 送出題 1，B 在 2 秒內看到題 1 變成「已送出」並顯示 A 的答案（若 B 正開著題 1，輸入框鎖定）；第三個瀏覽器在另一組，畫面完全沒有變化。
+- [x] 5.1 修改 `public/student/app.js`：進場成功與重新整理恢復後，關閉舊連線並建立 `EventSource('/api/events?studentId=...')`；階段事件與心跳行為不變；換組或進場失效時關閉；`error` 時依 `getEventErrorNextStep` 處理（CLOSED 時重新確認進場）。驗證：手動——學生進場後，開發者工具的 Network 分頁看到帶 studentId 的事件連線；重啟 server 後頁面回到選組畫面並說明進場狀態失效。
+- [x] 5.2 修改 `public/student/app.js`：收到 `submission` 事件時以 `applySubmission` 更新本組作答並鎖定畫面；重新連線成功（`open`）後重新讀取階段與本組作答。驗證：手動——兩個瀏覽器同一組，A 送出題 1，B 在 2 秒內看到題 1 變成「已送出」並顯示 A 的答案（若 B 正開著題 1，輸入框鎖定）；第三個瀏覽器在另一組，畫面完全沒有變化。
 
 ## 6. 整合驗證
 
