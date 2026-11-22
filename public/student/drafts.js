@@ -10,6 +10,10 @@ export function createDraftStore(storage) {
     activeStorage = null;
   }
 
+  function hasNonBlankValue(values) {
+    return Array.isArray(values) && values.some((value) => typeof value === 'string' && value.trim().length > 0);
+  }
+
   function get(studentId, questionId, blanksCount) {
     const key = keyFor(studentId, questionId);
     let value = memory.get(key) ?? null;
@@ -25,6 +29,10 @@ export function createDraftStore(storage) {
       if (value !== null) remove(studentId, questionId);
       return null;
     }
+    if (!hasNonBlankValue(value)) {
+      remove(studentId, questionId);
+      return null;
+    }
     memory.set(key, value.slice());
     return value.slice();
   }
@@ -32,6 +40,10 @@ export function createDraftStore(storage) {
   function set(studentId, questionId, values) {
     const key = keyFor(studentId, questionId);
     const draft = Array.isArray(values) ? values.slice() : [];
+    if (!hasNonBlankValue(draft)) {
+      remove(studentId, questionId);
+      return;
+    }
     memory.set(key, draft);
     if (activeStorage) {
       try {

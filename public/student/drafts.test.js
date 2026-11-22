@@ -32,6 +32,34 @@ test('draft with a different blank count is discarded', () => {
   assert.equal(storage.values.has('draft:student-01:10'), false);
 });
 
+test('empty and whitespace-only values do not create drafts', () => {
+  const storage = fakeStorage();
+  const drafts = createDraftStore(storage);
+  drafts.set('student-01', 1, ['', '']);
+  drafts.set('student-01', 2, ['  ', '\t']);
+  assert.equal(drafts.get('student-01', 1, 2), null);
+  assert.equal(drafts.has('student-01', 2, 2), false);
+  assert.equal(storage.values.has('draft:student-01:1'), false);
+  assert.equal(storage.values.has('draft:student-01:2'), false);
+});
+
+test('legacy empty drafts are removed by get and has while partial drafts remain', () => {
+  const storage = fakeStorage();
+  const drafts = createDraftStore(storage);
+
+  storage.setItem('draft:student-01:1', JSON.stringify(['', '  ']));
+  assert.equal(drafts.get('student-01', 1, 2), null);
+  assert.equal(storage.values.has('draft:student-01:1'), false);
+
+  storage.setItem('draft:student-01:2', JSON.stringify(['\t', ' ']));
+  assert.equal(drafts.has('student-01', 2, 2), false);
+  assert.equal(storage.values.has('draft:student-01:2'), false);
+
+  drafts.set('student-01', 3, [' ', 'answer']);
+  assert.equal(drafts.has('student-01', 3, 2), true);
+  assert.deepEqual(drafts.get('student-01', 3, 2), [' ', 'answer']);
+});
+
 test('undefined or failing storage degrades to memory without throwing', () => {
   const memoryOnly = createDraftStore();
   memoryOnly.set('student-01', 1, ['saved']);
