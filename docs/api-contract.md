@@ -425,10 +425,110 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/co
 Invoke-RestMethod http://localhost:3000/api/teacher/guided-notes -WebSession $teacher
 ```
 
-## 待補的公開題目格式
+## 搶答送出
 
-`session.questions` 已由匯入寫入，但目前沒有端點讓學生端讀取題目。`add-buzz-in-submission` 須新增學生端讀取題目的端點並在此定義回應格式；格式不得包含儲存格位置、原始檔內容或試算表 ID。匯入模組目前提出的公開形狀為 `{ id, prompt, blanks: [{ index, prefix, prompt }] }`，由該 change 確認後才成為契約。
+本節學生端點以 `studentId` 關聯有效進場紀錄。`studentId` 不是認證憑證。成功回應使用 `{"data": ...}`，錯誤沿用通用 `{"error":{"code","message"}}` envelope。
+
+### `GET /api/student/questions?studentId=...`
+
+先驗證 `studentId` 格式，再確認有效進場，最後檢查階段。準備中回 `409 QUESTIONS_NOT_AVAILABLE`；搶答中與已結束可讀取題目。
+
+```json
+{
+  "data": {
+    "questions": [
+      { "id": 1, "blanks": [{ "index": 0, "prefix": "", "prompt": "水的化學式是" }] },
+      { "id": 10, "blanks": [
+        { "index": 0, "prefix": "（1）", "prompt": "首都為" },
+        { "index": 1, "prefix": "（2）", "prompt": "人口最多的城市為" }
+      ] }
+    ]
+  }
+}
+```
+
+每題公開格式正式定義為只有 `id` 與 `blanks`；每個 blank 只有 `index`、`prefix`、`prompt`。不包含題目層 `prompt`、儲存格位置、原始檔內容、試算表 ID 或其他匯入資訊。
+
+### `POST /api/student/submissions`
+
+提交整題答案。依序檢查：
+
+1. `studentId` 格式，錯誤回 `400 INVALID_STUDENT_ID`。
+2. 有效進場，錯誤回 `403 STUDENT_NOT_ENTERED`。
+3. 階段為「搶答中」，否則回 `409 SUBMISSION_NOT_ALLOWED`。
+4. 題目存在，否則回 `404 QUESTION_NOT_FOUND`。
+5. `answers` 為陣列、長度等於該題空格數，且每項為字串；trim 後長度須為 1–200 字元，否則回 `400 INVALID_ANSWER`。
+6. 該組該題尚無有效作答，否則回 `409 ALREADY_SUBMITTED`。
+
+Request：
+
+```json
+{ "studentId": "stu-abc123", "questionId": 1, "answers": ["H2O"] }
+```
+
+成功回 `200`。回應不含順位：
+
+```json
+{ "data": { "questionId": 1, "submittedAt": "2026-11-14T00:00:00.000Z" } }
+```
+
+每組每題最多一筆有效作答。順位只在 server 內保存，不經任何學生端 API 公開。
+
+### `GET /api/student/submissions?studentId=...`
+
+先驗證 `studentId` 格式，再確認有效進場；任何階段均可查詢，只回該學生所屬組別的作答，不含順位或他組資訊。
+
+```json
+{
+  "data": {
+    "submissions": [
+      { "questionId": 1, "answers": ["H2O"], "submittedAt": "2026-11-14T00:00:00.000Z" }
+    ]
+  }
+}
+```
+
+### `GET /api/events` 的組別作答事件
+
+可選擇帶 `studentId` query 參數。無參數時行為不變，只收到既有 `phase` 與 `heartbeat` 事件。帶參數時先依 `studentId` 格式與有效進場檢查；無效格式回 `400 INVALID_STUDENT_ID`，沒有有效進場回 `403 STUDENT_NOT_ENTERED`，並以標準錯誤 envelope 拒絕且不建立 SSE 連線。這種失敗回應不會讓 `EventSource` 自動重連。
+
+成功連線除既有事件外，只會收到該組的 `submission` 事件：
+
+```text
+event: submission
+data: {"questionId":1,"answers":["H2O"],"submittedAt":"2026-11-14T00:00:00.000Z"}
+
+```
+
+事件內容不含順位。送出事件時依 `studentId` 目前有效進場狀態查詢組別。未帶 `studentId` 的連線、公開階段事件及 `GET /api/session` 均不含作答、提交數量或可推出他組狀況的資訊。
+
+### 搶答送出錯誤狀態
+
+以下錯誤沿用通用錯誤 envelope；既有通用「錯誤狀態」表不變。
+
+| HTTP | Code | 用途 |
+| --- | --- | --- |
+| 403 | `STUDENT_NOT_ENTERED` | 學生沒有有效進場紀錄 |
+| 409 | `QUESTIONS_NOT_AVAILABLE` | 準備中讀取題目 |
+| 409 | `SUBMISSION_NOT_ALLOWED` | 非搶答中階段提交答案 |
+| 404 | `QUESTION_NOT_FOUND` | 提交的題目不存在 |
+| 400 | `INVALID_ANSWER` | 答案陣列、空格數或答案內容不符規則 |
+| 409 | `ALREADY_SUBMITTED` | 該組該題已有有效作答 |
+
+### PowerShell 範例
+
+先登入老師，再以同一個 `-WebSession` 開始搶答；development 種子已有組別與題目：
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/login -ContentType 'application/json' -Body '{"password":"<老師密碼>"}' -SessionVariable teacher
+Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSession $teacher
+Invoke-RestMethod -Method Put http://localhost:3000/api/student/entry -ContentType 'application/json' -Body '{"studentId":"stu-aaaa1111","groupId":1}'
+Invoke-RestMethod "http://localhost:3000/api/student/questions?studentId=stu-aaaa1111"
+Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -ContentType 'application/json' -Body '{"studentId":"stu-aaaa1111","questionId":1,"answers":["H2O"]}'
+Invoke-RestMethod "http://localhost:3000/api/student/submissions?studentId=stu-aaaa1111"
+```
 
 ## 待補的作答紀錄格式
 
 server 內部的作答紀錄與每題判定結果（含作廢、公平順位與老師改選）的格式約定見 [作答紀錄與判定結果](submission-record.md)。送出、結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點。
+

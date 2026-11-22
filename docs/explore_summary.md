@@ -1,8 +1,10 @@
 # 課堂搶答系統｜OpenSpec Explore 結論
 
-版本 v0.2｜2026-11-21｜OpenSpec 組｜用途：交給 codex 執行 `openspec propose` 與 `apply` 的唯一輸入
+版本 v0.3｜2026-11-22｜OpenSpec 組｜用途：交給 codex 執行 `openspec propose` 與 `apply` 的唯一輸入
 
 > v0.2 變更：對齊共同契約 v0.6（D12 改為直接讀寫線上 Google Sheets、D13 增為 8 欄、D14／D16 補充、新增 D25）；補上各項決策的狀態（Confirmed／Default）與 SpecKit 組 2026-11-20 對照表帶來的待回覆事項；更新第 5、8、9、10、11 節。
+>
+> v0.3 變更：老師密碼登入（D18、O5）與教師控制台由 `add-teacher-console` 實作（PR 待合併），更新 D18、O5、能力表與 change 順序；`add-buzz-in-submission` 的開始搶答須先登入且至少一組一題。
 
 ## 0. 給 codex 的工作規則
 
@@ -52,7 +54,7 @@
 | D15 | 倒數：開啟時可選擇是否設定時間（10 秒至 60 分鐘）；時間到自動結束；剩餘時間以 server 為準 | Default |
 | D16 | 投影看板：搶答中只顯示階段、倒數、各組是否在線，**不顯示任何作答資訊（含送出數量）**；結束後可逐題或全部揭曉，逐題揭曉依題號順序 | Confirmed |
 | D17 | 老師在準備階段設定組數與組名 | Default |
-| D18 | 老師端需輸入密碼，密碼由環境變數設定（本組目前以 loopback 限制暫代，見 O5） | Default（SpecKit 已詢問本組，待回覆） |
+| D18 | 老師端需輸入密碼，密碼由環境變數 `TEACHER_PASSWORD` 設定；登入狀態存 HttpOnly cookie；同一來源 60 秒內錯 10 次暫時鎖定（429）。本組已於 `add-teacher-console` 實作（見 O5） | Default（本組已實作；SpecKit 詢問的回覆見第 10 節 Q1） |
 | D19 | 已結束後可重設活動回到準備中（需再確認）；組別保留，作答資料清空 | Default |
 | D20 | 組名 1–30 字元且不重複；倒數 10–3600 秒；組數上限本組為 100（SpecKit 為 50，見 O1） | Default（組數待統一） |
 | D21 | 學生只能在準備中換組；重新整理或斷線重連後回到原組別與目前階段 | Default |
@@ -67,8 +69,9 @@
 - **O1 組數上限**：覆寫 D20 的 50 組。老師設定組數 N，上限 100（真實課堂曾有 64 組，50 組不夠用）。SpecKit 組已於 2026-11-20 詢問是否統一；本組主張統一為 100。
 - **O2 組別命名**：老師輸入 N 後可一鍵產生「第 1 組～第 N 組」對應 eeclass 編號，仍可改名。
 - **O3（E5）結束後改選勝者**：`已結束` 階段，老師可對每題在所有送出中改選最終勝者（預設為第 1 順位），標記「老師改選」。匯出 xlsx 以最終勝者答案為準，csv 同時保留原始順位與最終勝者；學生結果頁顯示最終勝者。原因：系統不判斷對錯，快但答錯的答案不該被直接寫回。此項尚未納入共同契約，待與另一組討論，先實作。注意：D25 的連鎖重判只發生在作廢；改選勝者不得觸發公平順位重算，兩者須在資料模型分開（「有效作答」「原始順位」「最終勝者」三層）。
-- **O5 老師身分（D18）**：本組已決定採「老師端需密碼」，與共同契約一致。目前的 loopback 限制只是過渡，遠端講課（老師在別處操作自己雲端試算表）無法使用；須在 `teacher-monitoring-results` 之前或之內完成密碼驗證，並把目前分散在各寫入端點的 loopback 檢查收成同一個 middleware。密碼只放 `.env`（變數名稱建議 `TEACHER_PASSWORD`，與 SpecKit 一致），登入需有基本的失敗次數限制。
+- **O5 老師身分（D18）**：已由 `add-teacher-console` 實作（PR 待合併）：`TEACHER_PASSWORD` 來自 `.env`；`POST /api/teacher/login`、`logout`、`GET /api/teacher/auth`；老師端點（組別設定、匯入、開始、結束）一律用 `requireTeacher`，未登入回 `401 TEACHER_AUTH_REQUIRED`；`loopbackOnly` 只剩開發路由使用。老師可用手機或區網位址登入操作，遠端講課不再被擋。已知限制：區網以 HTTP 傳輸，密碼與 cookie 未加密，只適合課堂內網；登入狀態存在 server 記憶體，重啟後失效。新增老師端點請沿用 `requireTeacher`。
 - **O6 Google Sheets 寫回（D12）**：`export-guided-notes` 須支援「連結匯入 → 寫回線上試算表」。匯入時 server 私下保存試算表 ID 與工作表，供寫回使用；寫回前須重新讀取並以同一套表頭／題號規則重新定位，不可只信匯入時記下的儲存格位置（老師可能在匯入後插列），題號對不上時拒絕寫入並說明原因。服務帳號金鑰只放 `.env` 或 repo 外的檔案路徑，不進 repo。
+- **O7 開始搶答的前置條件**：開始前須至少一組、至少一題，否則 `409 NO_GROUPS`、`409 QUESTIONS_REQUIRED`，檢查順序為階段 → 組別 → 題目（與 SpecKit 的代碼一致，已寫入 `docs/api-contract.md`）。因此之後所有需要「搶答中」的測試與手動驗證，都要先登入、至少有一組一題（development 種子兩者皆有；也可用開發路由 `/api/dev/phase/搶答中` 略過登入與前置條件，僅限開發測試）。
 - **O4 學生端補充**：進場後組別記在瀏覽器本地；搶答中題號格顯示每題「未作答／草稿／已送出」；草稿只存本機，重新整理不消失，老師重設活動後清除。
 
 ## 5. 能力拆分與優先級
@@ -79,10 +82,10 @@
 | --- | --- | --- | --- | --- |
 | api-contract-and-session-lifecycle | API 契約、階段狀態機、全員同步（2 秒內）、統一錯誤格式（已完成並歸檔） | P0 | 學生端成員 | 已歸檔 |
 | groups-and-entry | 組別設定、學生進場、換組、重連、靜態檔案提供 | P0 | 學生端成員（API 與學生端）；教師端成員（組別設定畫面） | 已歸檔（PR #2 合併進 feat/student-quiz） |
-| guided-notes-import | 匯入、摘要確認、動態辨識 | P0 | 教師端成員 | 實作完成，PR 待審（`feat/guided-notes-import`） |
-| buzz-in-submission | 送出、鎖定、server 排序、競態處理、題目資料結構 | P0 | 學生端成員 | **下一個** |
+| guided-notes-import | 匯入、摘要確認、動態辨識 | P0 | 教師端成員 | 已歸檔 |
+| buzz-in-submission | 送出、鎖定、server 排序、競態處理、題目資料結構 | P0 | 學生端成員 | 規劃文件已 commit（`feat/buzz-in-submission`），待 apply |
 | student-ui | 學生端所有畫面（第 6 節） | P0 | 學生端成員 | 未開始 |
-| teacher-monitoring-results | 監看、結果、老師登入 | P0 | 教師端成員（資料來源為 server） | 未開始 |
+| teacher-monitoring-results | 監看、結果（老師登入已由 teacher-auth／teacher-console 完成，不再屬於此能力） | P0 | 教師端成員（資料來源為 server） | 未開始 |
 | export-guided-notes | 寫回 xlsx | P0 | 教師端成員 | 未開始（須依 D12 v0.6 改為 Google Sheets 寫回，見 O6） |
 | countdown | 倒數與自動結束 | P1 | 學生端成員（server 計時、學生端顯示）；教師端成員（老師設定） | 未開始 |
 | csv-export | 匯出活動結果 | P1 | 教師端成員 | 未開始（8 欄、本地時間） |
@@ -91,7 +94,8 @@
 | question-groups | 題組匯入與整題送出（D10） | P2 | 教師端成員（匯入）；學生端成員（送出與學生端） | 匯入端已含在 guided-notes-import；送出端未開始 |
 | fair-ranking | D14 公平順位 | P2 | 學生端成員 | 未開始（含 D25 連鎖重判） |
 | projection-board | D16 投影看板 | P2 | 教師端成員 | 未開始 |
-| teacher-auth | D18 老師密碼驗證，取代各寫入端點的 loopback 檢查（O5） | P0（遠端講課前必須完成） | 待定：建議由 server 核心負責人做，因為會改動共用的 guard | 未開始 |
+| teacher-auth | D18 老師密碼驗證，取代各寫入端點的 loopback 檢查（O5） | P0 | 教師端成員 | 實作完成，PR 待合併（`add-teacher-console`，`feat/teacher-console`） |
+| teacher-console | 教師控制台：登入畫面、活動狀態即時同步、開始與結束搶答（結束需確認）、組別與匯入依階段鎖定 | P0 | 教師端成員 | 實作完成，PR 待合併（`add-teacher-console`） |
 
 ## 6. 學生端需求（核心）
 
@@ -151,7 +155,7 @@
 
 待與 SpecKit 組、助教確認：
 
-- Q1 D18 老師密碼：本組同意採用，過渡期以 loopback 暫代（O5）。
+- Q1 D18 老師密碼：本組已實作密碼登入（O5），可回覆 SpecKit「已對齊」。需注意：本組的未登入代碼為 `TEACHER_AUTH_REQUIRED`，我在 SpecKit 文件中沒找到同名代碼，請對照確認是否一致。
 - Q2 D20 組數上限：本組主張 100（真實課堂 64 組），請 SpecKit 調整；若不統一，須記錄差異原因。
 - Q3 O3 結束後改選勝者是否納入共同契約（E5），以及與 D25 的關係。
 - Q4 SpecKit 對照表列出的其餘 Default 決策（D1～D11、D15、D17、D19、D21～D23）：逐條核對後回覆「照你們的」或指出差異（尚未逐條核對，見回覆草稿）。
@@ -163,12 +167,12 @@
 
 1. ✅ `add-api-contract-and-server-skeleton`
 2. ✅ `add-groups-and-student-entry`
-3. ✅ `add-guided-notes-import`（task.md 中之 5.3 若有時間可考慮補上）
-4. ⬜ `add-buzz-in-submission`：**只做 server**——題目讀取（供學生端）、送出、鎖定、server 排序、競態處理、每組私有推送；不含畫面。
+3. ✅ `add-guided-notes-import`（task 5.3 延後，待 `add-export-guided-notes` 一併處理）
+4. 🔶 `add-buzz-in-submission`（規劃文件已 commit，待 apply；須在 `add-teacher-console` 合併後再開始）：**只做 server**——題目讀取（供學生端）、送出、鎖定、server 排序、競態處理、每組私有推送；不含畫面。
 5. ⬜ `add-student-answering-ui`：學生端題號格、作答、草稿、送出、鎖定同步（依 4 的 API）。
 6. ⬜ `add-student-results`：結束後結果頁。
-7. ⬜ `add-teacher-auth`（O5）：以密碼取代 loopback，收斂 guard。
-8. 教師端與資料進出：`add-teacher-monitoring`、`add-export-guided-notes`（含 Google Sheets 寫回，O6）。
+7. ✅ `add-teacher-console`（含老師登入 D18 與開始／結束搶答；教師端成員已實作，PR 待合併，取代原本規劃的 `add-teacher-auth`）。
+8. 教師端與資料進出：`add-teacher-monitoring`（監看與結果，登入已不屬於它）、`add-export-guided-notes`（含 Google Sheets 寫回，O6）。
 9. P1：countdown、csv-export（8 欄）、void-submission、challenge-override。
 10. P2：question-groups（送出端）、fair-ranking（含 D25）、projection-board。
 
