@@ -169,3 +169,25 @@ test('student submission status is group scoped, rank free, and readable after e
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('createApplication passes its fixed millisecond clock to submission timestamps', async () => {
+  const fixedNow = Date.UTC(2026, 4, 6, 7, 8, 9, 123);
+  const server = createApplication({ environment: 'development', teacherPassword: TEST_PASSWORD, now: () => fixedNow }).listen(0, '127.0.0.1');
+  await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
+  const url = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const enterResponse = await enter(url);
+    assert.equal(enterResponse.status, 200);
+    const phaseResponse = await fetch(`${url}/api/dev/phase/%E6%90%B6%E7%AD%94%E4%B8%AD`, { method: 'POST' });
+    assert.equal(phaseResponse.status, 200);
+    const submissionResponse = await fetch(`${url}/api/student/submissions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ studentId: 'student-01', questionId: 1, answers: ['clock test'] }),
+    });
+    const submissionBody = await submissionResponse.json();
+    assert.equal(submissionResponse.status, 200, JSON.stringify(submissionBody));
+    assert.equal(submissionBody.data.submittedAt, new Date(fixedNow).toISOString());
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

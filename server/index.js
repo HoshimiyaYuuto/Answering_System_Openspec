@@ -55,8 +55,8 @@ export function createApplication({
   exposeTestErrorRoute = false,
   downloadGuidedNotesImpl = downloadGuidedNotes,
   teacherPassword = process.env.TEACHER_PASSWORD,
-  submissions = createSubmissions(),
   now,
+  submissions = createSubmissions(now ? { now: () => new Date(now()) } : {}),
 } = {}) {
   const app = express();
   const publicRoot = resolve('public');
