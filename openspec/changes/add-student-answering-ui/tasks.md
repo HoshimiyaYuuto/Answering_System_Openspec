@@ -15,8 +15,8 @@
 
 ## 3. 畫面與資料載入
 
-- [ ] 3.1 修改 `public/student/index.html`：新增 `answering` 區塊（題號格容器、單題作答頁容器、訊息區）與 `ended` 區塊與樣式，全部預設 `hidden`；沿用現有的樣式風格，題號按鈕與輸入框最小高度 44px 以上。驗證：啟動 server 後開學生頁，進場後仍只看到等待畫面，沒有新區塊露出；用瀏覽器開發者工具確認新元素存在且為 hidden。
-- [ ] 3.2 修改 `public/student/app.js`：進入搶答中時並行讀取 `GET /api/student/questions` 與 `GET /api/student/submissions`，依 `getAnsweringScreen` 切換畫面，渲染題號格與狀態文字；已結束顯示「活動已結束」。驗證：手動——準備中只有等待畫面；開始搶答後約 2 秒內出現 50 個題號，標示「未作答」；第二個瀏覽器在搶答中首次進場也直接看到題號格；結束後顯示「活動已結束」。
+- [x] 3.1 修改 `public/student/index.html`：新增 `answering` 區塊（題號格容器、單題作答頁容器、訊息區）與 `ended` 區塊與樣式，全部預設 `hidden`；沿用現有的樣式風格，題號按鈕與輸入框最小高度 44px 以上。驗證：啟動 server 後開學生頁，進場後仍只看到等待畫面，沒有新區塊露出；用瀏覽器開發者工具確認新元素存在且為 hidden。
+- [x] 3.2 修改 `public/student/app.js`：進入搶答中時並行讀取 `GET /api/student/questions` 與 `GET /api/student/submissions`，依 `getAnsweringScreen` 切換畫面，渲染題號格與狀態文字；已結束顯示「活動已結束」。驗證：手動——準備中只有等待畫面；開始搶答後約 2 秒內出現 50 個題號，標示「未作答」；第二個瀏覽器在搶答中首次進場也直接看到題號格；結束後顯示「活動已結束」。
 
 ## 4. 作答與送出
 
@@ -31,7 +31,7 @@
 
 ## 6. 整合驗證
 
-- [ ] 6.1 新增 `docs/verification/add-student-answering-ui.md`，比照既有驗證紀錄格式：環境欄（作業系統、Node 版本、瀏覽器與版本，留白）、自動測試（`npm test` 的 tests／pass／fail，留白）、手動驗證步驟（涵蓋 spec 的每個 Requirement，每步有操作與預期結果，結果欄留白；有巢狀陣列輸出的指令要加 `| ConvertTo-Json -Depth 5`），以及「未測項目」：真實手機與區網裝置、100 位學生同時在線的畫面表現、螢幕閱讀器、已結束後的結果頁（屬於 `add-student-results`）。
+- [ ] 6.1 新增 `docs/verification/add-student-answering-ui.md`，比照既有驗證紀錄格式：環境欄（作業系統、Node 版本、瀏覽器與版本，留白）、自動測試（`npm test` 的 tests／pass／fail，留白）、手動驗證步驟（涵蓋 spec 的每個 Requirement，每步有操作與預期結果，結果欄留白；有巢狀陣列輸出的指令要加 `| ConvertTo-Json -Depth 5`），以及「未測項目」：真實手機與區網裝置、100 位學生同時在線的畫面表現、螢幕閱讀器、已結束後的結果頁（屬於 `add-student-results`）。老師控制台的作答監看（需 add-teacher-monitoring 已合併）看得到學生頁送出的答案與名次，而學生頁本身不顯示名次。
 - [ ] 6.2 執行 `npm test`，並完成 6.1 的手動驗證後填寫結果。驗證：全部通過；未通過的項目不得勾選此 task。
 
 ## Workflow follow-up

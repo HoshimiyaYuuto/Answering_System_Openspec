@@ -1,4 +1,5 @@
-import { getEntryNextStep, getPhaseDisplay, getStoredEntryNextStep, isReconnecting, isStaleRequest } from './logic.js';
+import { getAnsweringScreen, getEntryNextStep, getPhaseDisplay, getQuestionStatus, getStoredEntryNextStep, isReconnecting, isStaleRequest } from './logic.js';
+import { createDraftStore } from './drafts.js';
 
 const selection = document.querySelector('#selection');
 const waiting = document.querySelector('#waiting');
@@ -7,6 +8,20 @@ const status = document.querySelector('#status');
 const refreshButton = document.querySelector('#refresh');
 const groupName = document.querySelector('#group-name');
 const phaseText = document.querySelector('#phase-text');
+const answering = document.querySelector('#answering');
+const answeringMessage = document.querySelector('#answering-message');
+const questionGrid = document.querySelector('#question-grid');
+const questionPage = document.querySelector('#question-page');
+const retryQuestionsButton = document.querySelector('#retry-questions');
+const ended = document.querySelector('#ended');
+
+let draftStorage;
+try {
+  draftStorage = localStorage;
+} catch {
+  draftStorage = undefined;
+}
+const drafts = createDraftStore(draftStorage);
 
 const reconnectBanner = document.createElement('p');
 reconnectBanner.textContent = '重新連線中…';
@@ -27,6 +42,10 @@ let lastEventAt = null;
 let reconnectingAfterError = false;
 let changingGroup = false;
 let groupsRequestId = 0;
+let answeringRequestId = 0;
+let currentEntry = null;
+let loadedQuestions = [];
+let loadedSubmissions = [];
 
 function createStudentId() {
   const bytes = new Uint8Array(18);
@@ -67,7 +86,11 @@ async function requestJson(path, options) {
 }
 
 function showSelection(message = '') {
+  answeringRequestId += 1;
+  currentEntry = null;
   waiting.hidden = true;
+  answering.hidden = true;
+  ended.hidden = true;
   selection.hidden = false;
   loadGroups(message);
 }
@@ -81,14 +104,83 @@ function updateWaitingView() {
 function showEntryResult(response) {
   const next = getEntryNextStep(response);
   if (next.screen === 'waiting') {
-    selection.hidden = true;
-    waiting.hidden = false;
+    currentEntry = next.entry;
     groupName.textContent = next.entry.group.name;
     if (next.entry.phase) phase = next.entry.phase;
-    updateWaitingView();
+    showPhaseScreen();
     return;
   }
   showSelection(next.message);
+}
+
+function showPhaseScreen() {
+  const screen = getAnsweringScreen(Boolean(currentEntry?.valid), phase);
+  selection.hidden = screen !== 'select-group';
+  waiting.hidden = screen !== 'waiting';
+  answering.hidden = screen !== 'answering';
+  ended.hidden = screen !== 'ended';
+  if (screen === 'waiting') updateWaitingView();
+  if (screen === 'answering') loadAnsweringData();
+  if (screen === 'ended') {
+    answeringRequestId += 1;
+    questionGrid.replaceChildren();
+    questionPage.replaceChildren();
+    answeringMessage.textContent = '';
+    answeringMessage.hidden = true;
+    questionGrid.hidden = true;
+  }
+}
+
+function renderQuestionGrid(questions, submissions) {
+  questionGrid.replaceChildren();
+  for (const question of questions) {
+    const hasSubmission = submissions.some((submission) => submission.questionId === question.id);
+    const hasDraft = drafts.has(studentId, question.id, question.blanks.length);
+    const statusByKey = {
+      unanswered: '未作答',
+      draft: '草稿',
+      submitted: '已送出',
+    };
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = `第 ${question.id} 題：${statusByKey[getQuestionStatus(hasSubmission, hasDraft)]}`;
+    questionGrid.append(button);
+  }
+}
+
+async function loadAnsweringData() {
+  if (!studentId || phase !== '搶答中' || !currentEntry?.valid) return;
+  const requestId = ++answeringRequestId;
+  answeringMessage.textContent = '載入題目中…';
+  answeringMessage.hidden = false;
+  questionGrid.hidden = true;
+  retryQuestionsButton.hidden = true;
+  try {
+    const query = `studentId=${encodeURIComponent(studentId)}`;
+    const [questionsResponse, submissionsResponse] = await Promise.all([
+      requestJson(`/api/student/questions?${query}`),
+      requestJson(`/api/student/submissions?${query}`),
+    ]);
+    if (isStaleRequest(requestId, answeringRequestId)) return;
+    const questions = questionsResponse?.data?.questions;
+    const submissions = submissionsResponse?.data?.submissions;
+    if (!Array.isArray(questions) || !Array.isArray(submissions)) throw new Error('伺服器回應格式錯誤。');
+    loadedQuestions = questions;
+    loadedSubmissions = submissions;
+    renderQuestionGrid(loadedQuestions, loadedSubmissions);
+    answeringMessage.textContent = '';
+    answeringMessage.hidden = true;
+    questionGrid.hidden = false;
+  } catch (error) {
+    if (isStaleRequest(requestId, answeringRequestId)) return;
+    if (error.code === 'STUDENT_NOT_ENTERED') {
+      showSelection('進場狀態已失效，請重新選擇組別。');
+      return;
+    }
+    answeringMessage.textContent = '無法載入題目，請稍後再試';
+    answeringMessage.hidden = false;
+    retryQuestionsButton.hidden = false;
+  }
 }
 
 async function loadGroups(message = '') {
@@ -162,9 +254,9 @@ async function synchronizeFromServer() {
       requestJson('/api/session'),
       restoreEntry(),
     ]);
-    if (!waiting.hidden) {
+    if (currentEntry?.valid) {
       phase = session.data.phase;
-      updateWaitingView();
+      showPhaseScreen();
     }
   } catch (error) {
     if (!waiting.hidden) status.textContent = error.message;
@@ -177,7 +269,7 @@ function handlePhase(event) {
   try {
     const update = JSON.parse(event.data);
     phase = update.phase;
-    if (!waiting.hidden) updateWaitingView();
+    if (currentEntry?.valid) showPhaseScreen();
   } catch {
     // Ignore malformed event data; the next session snapshot will resynchronize.
   }
@@ -207,6 +299,7 @@ setInterval(() => {
 }, 5_000);
 
 refreshButton.addEventListener('click', () => loadGroups());
+retryQuestionsButton.addEventListener('click', () => loadAnsweringData());
 changeGroupButton.addEventListener('click', () => {
   if (phase !== '準備中') return;
   changingGroup = true;
