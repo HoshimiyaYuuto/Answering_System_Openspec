@@ -43,8 +43,8 @@
 
 ## 5. 服務帳號設定與真實試算表驗證
 
-- [ ] 5.1 更新 `README.md`：新增「寫回 Google 試算表」一節，包含建立 Google Cloud 專案、啟用 Sheets API、建立服務帳號與 JSON 金鑰、把金鑰放在 repo 外並在 `.env` 寫路徑、把試算表共用給服務帳號信箱為編輯者、匯入前需設為「知道連結者可檢視」、第二次寫回不會清除本次無人作答的題目、下載 xlsx 可能遺失部分格式；驗證：依 README 步驟設定後 `npm start`，`GET /api/teacher/guided-notes/writeback` 回 `configured: true` 與服務帳號信箱
-- [ ] 5.2 以真實 Google 試算表人工驗證，結果記錄於 `docs/verification/add-guided-notes-export.md`（不記錄試算表 ID、金鑰路徑以外的金鑰資訊或答案以外的個資）：把 `02-official-group.xlsx` 與 `04-mixed-groups.xlsx` 上傳到 Google 雲端硬碟並「儲存為 Google 試算表」，設為「知道連結者可檢視」並共用給服務帳號；驗證：
+- [x] 5.1 更新 `README.md`：新增「寫回 Google 試算表」一節，包含建立 Google Cloud 專案、啟用 Sheets API、建立服務帳號與 JSON 金鑰、把金鑰放在 repo 外並在 `.env` 寫路徑、把試算表共用給服務帳號信箱為編輯者、匯入前需設為「知道連結者可檢視」、第二次寫回不會清除本次無人作答的題目、下載 xlsx 可能遺失部分格式；驗證：依 README 步驟設定後 `npm start`，`GET /api/teacher/guided-notes/writeback` 回 `configured: true` 與服務帳號信箱
+- [x] 5.2 以真實 Google 試算表人工驗證，結果記錄於 `docs/verification/add-guided-notes-export.md`（不記錄試算表 ID、金鑰路徑以外的金鑰資訊或答案以外的個資）：把 `02-official-group.xlsx` 與 `04-mixed-groups.xlsx` 上傳到 Google 雲端硬碟並「儲存為 Google 試算表」，設為「知道連結者可檢視」並共用給服務帳號；驗證：
   1. 以連結匯入 `02`，開始後由一組學生以 `POST /api/student/submissions` 送出第 1 題「甲」「乙」，結束後按寫回，線上試算表 H5、H6 出現答案，G5、G6 前綴與格式不變，畫面顯示寫入 2 格。
   2. 再按一次寫回，答案仍在 H5、H6，前綴不變。
   3. 以 `04` 重做一次，G7 等格為「（1）甲」形式。
