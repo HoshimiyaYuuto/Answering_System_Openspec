@@ -27,5 +27,5 @@
 
 - **負責人**：學生端成員。
 - **程式**：新增 `server/student-results.js` 與測試、`server/student-results-api.test.js`；修改 `server/index.js`（新端點）、`docs/api-contract.md`、`public/student/logic.js`、`logic.test.js`、`index.html`、`app.js`、`server/capacity-check.js`；新增 `docs/verification/add-student-results.md`。本 change 追加的 UI 一致性工作會修改 `public/student/logic.js`、`public/student/logic.test.js` 與 `public/student/app.js`。
-- **依賴**：`add-buzz-in-submission`（已歸檔）、`add-results-computation`（已合併）、`add-student-answering-ui`（PR 審查中；本 change 在它的「已結束」畫面上擴充，因此分支疊在它之上，等它合併後再開 PR）。
+- **依賴**：`add-buzz-in-submission`（已歸檔）、`add-results-computation`（已合併）、`add-student-answering-ui`（已合併；本 change 擴充其「已結束」畫面）。
 - **不在範圍**：公平順位、作廢與老師改選（O3 已確認兩組都不納入共同契約）、老師端結果畫面、CSV 與匯出、倒數。

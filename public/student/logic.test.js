@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, validateAnswers } from './logic.js';
+import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers } from './logic.js';
 
 test('connection is considered stale only after forty seconds without an event', () => {
   assert.equal(isReconnecting(10_000, 50_000), false);
@@ -79,6 +79,29 @@ test('submission updates are idempotent and do not mutate their inputs', () => {
   assert.deepEqual(original[0].answers, ['old']);
   assert.deepEqual(applySubmission(replaced, incoming), replaced);
   assert.deepEqual(applySubmission([], { questionId: 2, answers: ['two'] }), [{ questionId: 2, answers: ['two'] }]);
+});
+
+test('submission snapshots merge as a union and keep current submissions on duplicate questions', () => {
+  const current = [
+    { questionId: 1, answers: ['event answer'], submittedAt: 'event time' },
+    { questionId: 3, answers: ['local answer'], submittedAt: 'local time' },
+  ];
+  const snapshot = [
+    { questionId: 1, answers: ['stale answer'], submittedAt: 'stale time' },
+    { questionId: 2, answers: ['snapshot answer'], submittedAt: 'snapshot time' },
+  ];
+
+  const merged = mergeSubmissions(current, snapshot);
+  assert.deepEqual(merged, [
+    { questionId: 1, answers: ['event answer'], submittedAt: 'event time' },
+    { questionId: 2, answers: ['snapshot answer'], submittedAt: 'snapshot time' },
+    { questionId: 3, answers: ['local answer'], submittedAt: 'local time' },
+  ]);
+  assert.deepEqual(current[0].answers, ['event answer']);
+  assert.deepEqual(snapshot[0].answers, ['stale answer']);
+  assert.deepEqual(mergeSubmissions([], snapshot), snapshot);
+  assert.deepEqual(mergeSubmissions(current, []), current);
+  assert.deepEqual(mergeSubmissions(null, null), []);
 });
 
 test('submission errors map to the documented next steps', () => {

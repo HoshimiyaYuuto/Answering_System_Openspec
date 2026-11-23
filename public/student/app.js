@@ -1,4 +1,4 @@
-import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, validateAnswers } from './logic.js';
+import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers } from './logic.js';
 import { createDraftStore } from './drafts.js';
 
 const selection = document.querySelector('#selection');
@@ -49,9 +49,13 @@ let changingGroup = false;
 let groupsRequestId = 0;
 let answeringRequestId = 0;
 let synchronizationRequestId = 0;
+let submissionsSnapshotRequestId = 0;
 let currentEntry = null;
 let eventSource = null;
 let eventSourceUrl = null;
+let closedEntryRetryTimer = null;
+let closedEntryRetrySource = null;
+let closedEntryCheckSource = null;
 let loadedQuestions = [];
 let loadedSubmissions = [];
 let activeQuestionId = null;
@@ -98,6 +102,7 @@ async function requestJson(path, options) {
   if (!response.ok) {
     const error = new Error(body?.error?.message || '伺服器發生錯誤。');
     error.code = body?.error?.code;
+    error.status = response.status;
     throw error;
   }
   return body;
@@ -105,7 +110,12 @@ async function requestJson(path, options) {
 
 function showSelection(message = '') {
   answeringRequestId += 1;
+  synchronizationRequestId += 1;
+  submissionsSnapshotRequestId += 1;
+  clearClosedEntryRetry();
+  closedEntryCheckSource = null;
   clearResultsView();
+  loadedSubmissions = [];
   currentEntry = null;
   ensureEventSource();
   waiting.hidden = true;
@@ -124,6 +134,13 @@ function updateWaitingView() {
 function showEntryResult(response) {
   const next = getEntryNextStep(response);
   if (next.screen === 'waiting') {
+    clearClosedEntryRetry();
+    if (currentEntry?.group?.id !== next.entry.group.id) {
+      answeringRequestId += 1;
+      synchronizationRequestId += 1;
+      submissionsSnapshotRequestId += 1;
+      loadedSubmissions = [];
+    }
     currentEntry = next.entry;
     groupName.textContent = next.entry.group.name;
     if (next.entry.phase) phase = next.entry.phase;
@@ -405,12 +422,23 @@ function setQuestionControlsDisabled(disabled) {
 }
 
 async function refreshSubmissions() {
-  const query = `studentId=${encodeURIComponent(studentId)}`;
+  const requestedStudentId = studentId;
+  const requestedGroupId = currentEntry?.group?.id;
+  const requestId = ++submissionsSnapshotRequestId;
+  const query = `studentId=${encodeURIComponent(requestedStudentId)}`;
   const response = await requestJson(`/api/student/submissions?${query}`);
+  if (isStaleRequest(requestId, submissionsSnapshotRequestId)
+    || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return loadedSubmissions;
   const submissions = projectSubmissions(response?.data?.submissions);
-  loadedSubmissions = submissions;
+  loadedSubmissions = mergeSubmissions(loadedSubmissions, submissions);
   renderQuestionGrid(loadedQuestions, loadedSubmissions);
-  return submissions;
+  return loadedSubmissions;
+}
+
+function isCurrentEntryContext(requestedStudentId, requestedGroupId) {
+  return studentId === requestedStudentId
+    && currentEntry?.valid === true
+    && currentEntry.group?.id === requestedGroupId;
 }
 
 function isValidQuestionId(questionId) {
@@ -533,29 +561,36 @@ function messageForCurrentQuestion(text) {
 async function loadAnsweringData() {
   if (!studentId || phase !== '搶答中' || !currentEntry?.valid) return;
   const requestId = ++answeringRequestId;
+  const requestedStudentId = studentId;
+  const requestedGroupId = currentEntry.group?.id;
+  const snapshotRequestId = ++submissionsSnapshotRequestId;
   answeringMessage.textContent = '載入題目中…';
   answeringMessage.hidden = false;
   questionGrid.hidden = true;
   retryQuestionsButton.hidden = true;
   try {
-    const query = `studentId=${encodeURIComponent(studentId)}`;
+    const query = `studentId=${encodeURIComponent(requestedStudentId)}`;
     const [questionsResponse, submissionsResponse] = await Promise.all([
       requestJson(`/api/student/questions?${query}`),
       requestJson(`/api/student/submissions?${query}`),
     ]);
-    if (isStaleRequest(requestId, answeringRequestId)) return;
+    if (isStaleRequest(requestId, answeringRequestId)
+      || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return;
     const questions = questionsResponse?.data?.questions;
     const submissions = projectSubmissions(submissionsResponse?.data?.submissions);
     if (!Array.isArray(questions)) throw new Error('伺服器回應格式錯誤。');
     loadedQuestions = questions;
-    loadedSubmissions = submissions;
+    if (!isStaleRequest(snapshotRequestId, submissionsSnapshotRequestId)) {
+      loadedSubmissions = mergeSubmissions(loadedSubmissions, submissions);
+    }
     renderQuestionGrid(loadedQuestions, loadedSubmissions);
     answeringMessage.textContent = '';
     answeringMessage.hidden = true;
     questionGrid.hidden = answeringView !== 'grid';
     questionPage.hidden = answeringView !== 'question';
   } catch (error) {
-    if (isStaleRequest(requestId, answeringRequestId)) return;
+    if (isStaleRequest(requestId, answeringRequestId)
+      || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return;
     if (error.code === 'STUDENT_NOT_ENTERED') {
       showSelection('進場狀態已失效，請重新選擇組別。');
       return;
@@ -633,22 +668,28 @@ async function enterGroup(groupId, button) {
 
 async function synchronizeFromServer() {
   const requestId = ++synchronizationRequestId;
+  const requestedStudentId = studentId;
+  const requestedGroupId = currentEntry?.group?.id;
+  const submissionsRequestId = currentEntry?.valid ? ++submissionsSnapshotRequestId : null;
   try {
-    const submissionsPath = studentId && currentEntry?.valid
-      ? `/api/student/submissions?studentId=${encodeURIComponent(studentId)}`
+    const submissionsPath = requestedStudentId && currentEntry?.valid
+      ? `/api/student/submissions?studentId=${encodeURIComponent(requestedStudentId)}`
       : null;
     const [session, , submissionsResponse] = await Promise.all([
       requestJson('/api/session'),
       restoreEntry(),
       submissionsPath ? requestJson(submissionsPath) : Promise.resolve(null),
     ]);
-    if (isStaleRequest(requestId, synchronizationRequestId)) return;
+    if (isStaleRequest(requestId, synchronizationRequestId)
+      || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return;
     if (currentEntry?.valid) {
-      const submissions = projectSubmissions(submissionsResponse?.data?.submissions);
       const phaseChanged = phase !== session.data.phase;
       if (phaseChanged && session.data.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
       phase = session.data.phase;
-      loadedSubmissions = submissions;
+      if (!isStaleRequest(submissionsRequestId, submissionsSnapshotRequestId)) {
+        const submissions = projectSubmissions(submissionsResponse?.data?.submissions);
+        loadedSubmissions = mergeSubmissions(loadedSubmissions, submissions);
+      }
       renderQuestionGrid(loadedQuestions, loadedSubmissions);
       if (answeringView === 'question' && activeQuestionId !== null) {
         const question = loadedQuestions.find((item) => item.id === activeQuestionId);
@@ -715,7 +756,11 @@ function ensureEventSource() {
     ? `/api/events?studentId=${encodeURIComponent(studentId)}`
     : '/api/events';
   if (eventSource && eventSourceUrl === targetUrl && eventSource.readyState !== 2) return;
-  if (eventSource) eventSource.close();
+  if (eventSource) {
+    clearClosedEntryRetry(eventSource);
+    if (closedEntryCheckSource === eventSource) closedEntryCheckSource = null;
+    eventSource.close();
+  }
 
   eventSourceUrl = targetUrl;
   let hasOpened = false;
@@ -742,6 +787,10 @@ function ensureEventSource() {
     reconnectBanner.hidden = true;
     if (!hasOpened) {
       hasOpened = true;
+      if (targetUrl !== '/api/events') {
+        reconnecting = false;
+        synchronizeFromServer();
+      }
       return;
     }
     if (!reconnecting) return;
@@ -750,14 +799,39 @@ function ensureEventSource() {
   });
 }
 
+function clearClosedEntryRetry(source = null) {
+  if (source && closedEntryRetrySource !== source) return;
+  if (closedEntryRetryTimer !== null) clearTimeout(closedEntryRetryTimer);
+  closedEntryRetryTimer = null;
+  closedEntryRetrySource = null;
+}
+
+function scheduleClosedEntryRetry(source, requestedStudentId) {
+  if (source !== eventSource || closedEntryRetryTimer !== null) return;
+  closedEntryRetrySource = source;
+  closedEntryRetryTimer = setTimeout(() => {
+    if (closedEntryRetrySource !== source) return;
+    closedEntryRetryTimer = null;
+    closedEntryRetrySource = null;
+    if (source === eventSource && studentId === requestedStudentId) {
+      confirmEntryAfterClosedEventSource(source);
+    }
+  }, 3_000);
+}
+
 async function confirmEntryAfterClosedEventSource(source) {
+  if (source !== eventSource) return;
   if (!studentId) {
     showSelection('進場狀態已失效，請重新選擇組別。');
     return;
   }
+  if (closedEntryCheckSource === source || closedEntryRetrySource === source) return;
+  const requestedStudentId = studentId;
+  closedEntryCheckSource = source;
   try {
-    const entry = await requestJson(`/api/student/entry?studentId=${encodeURIComponent(studentId)}`);
-    if (source !== eventSource) return;
+    const entry = await requestJson(`/api/student/entry?studentId=${encodeURIComponent(requestedStudentId)}`);
+    if (source !== eventSource || studentId !== requestedStudentId) return;
+    clearClosedEntryRetry(source);
     const next = getStoredEntryNextStep(storedStudentId, entry);
     if (next.screen === 'waiting') {
       showEntryResult(entry);
@@ -765,8 +839,15 @@ async function confirmEntryAfterClosedEventSource(source) {
     }
     showSelection(next.message || '進場狀態已失效，請重新選擇組別。');
   } catch (error) {
-    if (source !== eventSource) return;
-    if (error.code === 'STUDENT_NOT_ENTERED') showSelection('進場狀態已失效，請重新選擇組別。');
+    if (source !== eventSource || studentId !== requestedStudentId) return;
+    if (error.code === 'STUDENT_NOT_ENTERED') {
+      clearClosedEntryRetry(source);
+      showSelection('進場狀態已失效，請重新選擇組別。');
+    } else if (error instanceof TypeError || error?.name === 'AbortError' || error.status >= 500) {
+      scheduleClosedEntryRetry(source, requestedStudentId);
+    }
+  } finally {
+    if (closedEntryCheckSource === source) closedEntryCheckSource = null;
   }
 }
 

@@ -84,6 +84,17 @@ export function applySubmission(submissions, submission) {
   return next;
 }
 
+export function mergeSubmissions(current, snapshot) {
+  const merged = new Map();
+  for (const submission of Array.isArray(snapshot) ? snapshot : []) {
+    merged.set(submission.questionId, { ...submission, answers: [...submission.answers] });
+  }
+  for (const submission of Array.isArray(current) ? current : []) {
+    merged.set(submission.questionId, { ...submission, answers: [...submission.answers] });
+  }
+  return [...merged.values()];
+}
+
 export function getSubmitErrorNextStep(error) {
   const code = error?.code ?? error?.error?.code;
   if (code === 'ALREADY_SUBMITTED') return { action: 'refresh-submissions' };

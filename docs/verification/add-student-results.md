@@ -6,24 +6,24 @@
 
 | 項目 | 內容 |
 | --- | --- |
-| 日期 |  |
-| 作業系統 |  |
-| Node 版本（`node -v`） |  |
-| PowerShell 版本 |  |
-| 瀏覽器 A（一般視窗，第 1 組） |  |
-| 瀏覽器 B（無痕視窗，第 1 組） |  |
-| 瀏覽器 C（另一種瀏覽器，第 2 組） |  |
-| 分支與 commit（`git log --oneline -1`） |  |
+| 日期 | 2026/11/23 |
+| 作業系統 | Microsoft Windows 10 家用版 (10.0.19045.0) |
+| Node 版本（`node -v`） | v26.13.1 |
+| PowerShell 版本 | 5.1.19041.6456 |
+| 瀏覽器 A（一般視窗，第 1 組） | Google 一般視窗 |
+| 瀏覽器 B（無痕視窗，第 1 組） | Google 無痕視窗 |
+| 瀏覽器 C（另一種瀏覽器，第 2 組） | Edge InPrivate 視窗 |
+| 分支與 commit（`git log --oneline -1`） | 82ea100 |
 
 ## 2. 自動測試與靜態檢查
 
 | 指令 | 預期 | 結果 | 數字（填 `totalMs／slowestMs` 與提交場景數字） |
 | --- | --- | --- | --- |
-| `node --test server/student-results.test.js server/student-results-api.test.js public/student/logic.test.js` | 全部通過 |  |  |
-| `npm test` | 全部通過 |  |  |
-| `npm run check:capacity`（第 1 次） | 全部斷言通過並輸出量測 JSON |  |  |
-| `npm run check:capacity`（第 2 次） | 全部斷言通過並輸出量測 JSON |  |  |
-| `Select-String -Path public\student\app.js -Pattern 'innerHTML'` | 沒有輸出 |  |  |
+| `node --test server/student-results.test.js server/student-results-api.test.js public/student/logic.test.js` | 全部通過 | 通過 | `tests 29`, `pass 29`, `fail 0`, `duration_ms 1012.5754` |
+| `npm test` | 全部通過 | 通過 | `tests 190`, `pass 190`, `fail 0`, `duration_ms 16546.5754` |
+| `npm run check:capacity`（第 1 次） | 全部斷言通過並輸出量測 JSON | 通過 | `SSE：clients 100、questionCount 50、maxLatencyMs 5；student 100、totalMs 79、slowestMs 79；提交：5000 筆、totalMs 606、slowestQuestionMs 35` |
+| `npm run check:capacity`（第 2 次） | 全部斷言通過並輸出量測 JSON | 通過 | `SSE：clients 100、questionCount 50、maxLatencyMs 5；student 100、totalMs 70、slowestMs 70；提交：5000 筆、totalMs 617、slowestQuestionMs 34` |
+| `Select-String -Path public\student\app.js -Pattern 'innerHTML'` | 沒有輸出 | 通過 | 沒有輸出 |
 
 ## 3. 手動驗證的共同準備
 
@@ -60,18 +60,19 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -Co
 
 | 編號 | 操作 | 預期 | 結果 |
 | --- | --- | --- | --- |
-| R1 | 活動在搶答中時，瀏覽器 A 查看學生頁與 F12 Network。 | 畫面沒有結果區塊，Network 沒有 `GET /api/student/results`。 |  |
-| R2 | 老師結束活動，查看 A 的學生頁。 | 約 2 秒內顯示「活動已結束」與結果區塊；摘要顯示本組成功題數與總題數，每題列出題號、勝者與答案、本組名次與答案。 |  |
-| R3 | A、B 同為第 1 組，C 為第 2 組；讓 A、C 依序提交同一題，結束活動後比較三個結果頁。 | 三個畫面顯示相同勝者；第 1 組與第 2 組各自顯示本組名次與答案。 |  |
-| R4 | 提交題 10 的兩個空格答案後結束活動，查看結果頁該題。 | 答案依空格順序顯示，並帶有題組前綴。 |  |
-| R5 | 在活動已結束且結果已顯示時重新整理 A。 | 恢復進場後仍顯示結果。 |  |
-| R6 | 造出指定情境：A（第 1 組）只送出題 1；C（第 2 組）送出題 1 與題 2；題 3 無人作答。結束活動後查看 A 的結果頁。 | A 的題 2 顯示「本組未作答」，題 3 顯示「無人作答」。 |  |
-| R7 | 提交答案 `<b>x</b>`，結束活動後查看對應答案。 | `<b>x</b>` 以純文字顯示，不執行 HTML。 |  |
-| R8 | 開啟 DevTools Network request blocking，封鎖 `*api/student/results*`，重新整理已結束的學生頁；解除封鎖後按重試。 | 封鎖時顯示「無法載入結果，請稍後再試」與重試按鈕；解除封鎖後重試成功並顯示結果。 |  |
-| R9 | A 停在已結束的結果畫面時重啟 server，再重新整理。 | 回到選組畫面並說明進場狀態已失效。 |  |
-| R10 | 在 F12 Network 只檢查 `GET /api/student/results` 的回應本文，搜尋 `rank`、`groupId`、`placings`、`settled`、`winnerSource`；再檢查學生畫面文字。 | 回應本文找不到上述字串；畫面沒有他組組名（勝者除外）。其他端點（例如進場）可能包含 `groupId`，不屬於此檢查範圍。 |  |
-| R12 | 在瀏覽器 A 開啟搶答頁並以 DevTools 減慢 `GET /api/student/submissions`；讓同組的 B 在快照回覆前提交題 1，確認 A 收到即時事件，再等快照回覆。另以 DevTools 封鎖 A 的 studentId `events` 連線，讓 B 提交題 2 後解除封鎖，等待 A 首次成功觸發 `open`。 | 第一個快照回覆後 A 的題 1 仍顯示「已送出」；首次 studentId 連線開啟後同步到題 2，題號狀態不退回「未作答」。 |  |
-| R13 | A 已進場時，在 DevTools 封鎖 `GET /api/student/entry`，重啟 server 使 studentId EventSource 得到 CLOSED／拒絕；觀察進場確認網路失敗，稍後解除封鎖。 | 畫面不因暫時網路錯誤卡在 CLOSED；延遲重試進場確認，解除封鎖後確認進場已失效並回到選組畫面。 |  |
+| R1 | 活動在搶答中時，瀏覽器 A 查看學生頁與 F12 Network。 | 畫面沒有結果區塊，Network 沒有 `GET /api/student/results`。 | 符合預期 |
+| R2 | 老師結束活動，查看 A 的學生頁。 | 約 2 秒內顯示「活動已結束」與結果區塊；摘要顯示本組成功題數與總題數，每題列出題號、勝者與答案、本組名次與答案。 | 符合預期 |
+| R3 | A、B 同為第 1 組，C 為第 2 組；讓 A、C 依序提交同一題，結束活動後比較三個結果頁。 | 三個畫面顯示相同勝者；第 1 組與第 2 組各自顯示本組名次與答案。 | 符合預期 |
+| R4 | 提交題 10 的兩個空格答案後結束活動，查看結果頁該題。 | 答案依空格順序顯示，並帶有題組前綴。 | 符合預期 |
+| R5 | 在活動已結束且結果已顯示時重新整理 A。 | 恢復進場後仍顯示結果。 | 符合預期 |
+| R6 | 造出指定情境：A（第 1 組）只送出題 1；C（第 2 組）送出題 1 與題 2；題 3 無人作答。結束活動後查看 A 的結果頁。 | A 的題 2 顯示「本組未作答」，題 3 顯示「無人作答」。 | 符合預期 |
+| R7 | 提交答案 `<b>x</b>`，結束活動後查看對應答案。 | `<b>x</b>` 以純文字顯示，不執行 HTML。 | 符合預期 |
+| R8 | 在 Network 分頁找 results?studentId=，對其右鍵->Block Request->Block Request URL，重新整理已結束的學生頁；解除封鎖後按重試。 | 封鎖時顯示「無法載入結果，請稍後再試」與重試按鈕；解除封鎖後重試成功並顯示結果。 | 符合預期 |
+| R9 | A 停在已結束的結果畫面時重啟 server，再重新整理。 | 回到選組畫面並說明進場狀態已失效。 | 符合預期 |
+| R10 | 在 F12 Network 只檢查 `GET /api/student/results` 的回應本文，搜尋 `rank`、`groupId`、`placings`、`settled`、`winnerSource`；再檢查學生畫面文字。 | 回應本文找不到上述字串；畫面沒有他組組名（勝者除外）。其他端點（例如進場）可能包含 `groupId`，不屬於此檢查範圍。 | 符合預期 |
+| R12a | 見上述步驟：A 的 Console 讓 `/api/student/submissions?` 回應延遲 8 秒；開始搶答後，8 秒內 B 提交題 1 | 事件抵達後 A 的題 1 為「已送出」；快照回覆後仍為「已送出」，不退回「未作答」 | 符合預期 |
+| R12b | A 在搶答中封鎖 `*://*/api/events*` 後重新整理；B 提交題 2；解除封鎖 | 10 秒內 A 的題 2 同步為「已送出」 | 符合預期 |
+| R13 | A 已進場；封鎖 `*://*/api/student/entry*`；重啟 server；數秒後解除封鎖 | 封鎖期間有重試且畫面不卡住；解除後回到選組畫面並說明進場失效 | 符合預期 |
 
 ## 5. 老師控制台交叉確認
 
@@ -79,7 +80,7 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -Co
 
 | 編號 | 操作 | 預期 | 結果 |
 | --- | --- | --- | --- |
-| R11 | 以老師身分查看控制台或 `GET /api/teacher/monitor` 的名次，並與學生頁 `own.place` 比對。 | 老師端名次與該組學生結果頁顯示的本組名次一致。 |  |
+| R11 | 以老師身分查看控制台或 `GET /api/teacher/monitor` 的名次，並與學生頁 `own.place` 比對。 | 老師端名次與該組學生結果頁顯示的本組名次一致。 | 符合預期 |
 
 ## 6. 規格對照
 
@@ -100,7 +101,7 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -Co
 
 | 項目 | 說明 |
 | --- | --- |
-| check:capacity 首次量測後是否調整 5,000 毫秒門檻及理由 |  |
+| check:capacity 首次量測後是否調整 5,000 毫秒門檻及理由 | 暫不調整，目前仍足夠 |
 
 ## 8. 未測項目
 
@@ -113,6 +114,6 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -Co
 
 | 項目 | 內容 |
 | --- | --- |
-| 自動測試 |  |
-| 手動驗證 |  |
-| 是否可歸檔 |  |
+| 自動測試 | 通過 |
+| 手動驗證 | 通過 |
+| 是否可歸檔 | 待教師端成員review後即可歸檔 |
