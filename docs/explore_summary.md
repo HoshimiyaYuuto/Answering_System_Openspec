@@ -172,7 +172,7 @@
 2. ✅ `add-groups-and-student-entry`
 3. ✅ `add-guided-notes-import`（task 5.3 延後，待 `add-export-guided-notes` 一併處理）
 4. ✅ `add-buzz-in-submission`（已合併並歸檔；後續小修：`submissions.clear()` 不清訂閱者、`createApplication` 的 `now` 轉為 Date 傳給 `createSubmissions`）：**只做 server**——題目讀取（供學生端）、送出、鎖定、server 排序、競態處理、每組私有推送；不含畫面。
-5. 🔶 `add-student-answering-ui`：學生端題號格、作答、草稿、送出、鎖定同步（依 4 的 API；規劃文件已備，待 apply；只動 `public/student/`，不含結果頁）。
+5. ✅ `add-student-answering-ui`：學生端題號格、作答、草稿、送出、鎖定同步（依 4 的 API；規劃文件已備，待 apply；只動 `public/student/`，不含結果頁）。
 5a. ✅ `add-results-computation`：`server/results.js` 的 `computeResults()` 第一版（教師端成員，已合併，待歸檔）。
 6. 🔶 `add-student-results`：結束後結果頁（依賴 5a 的 `computeResults()` 與 server 端點公開結果）。
 7. ✅ `add-teacher-console`（含老師登入 D18 與開始／結束搶答；教師端成員實作，已歸檔，取代原本規劃的 `add-teacher-auth`）。
