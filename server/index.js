@@ -12,6 +12,7 @@ import {
 } from './guided-notes-import.js';
 import { createTeacherAuth, TeacherAuthError } from './teacher-auth.js';
 import { createSubmissions } from './submissions.js';
+import { buildStudentResults } from './student-results.js';
 
 const TEACHER_COOKIE = 'teacher_session';
 
@@ -254,6 +255,21 @@ export function createApplication({
     if (!entry) return;
     const ownSubmissions = submissions.listByGroup(entry.group.id).map(({ questionId, answers, submittedAt }) => ({ questionId, answers, submittedAt }));
     return response.json({ data: { submissions: ownSubmissions } });
+  });
+
+  app.get('/api/student/results', (request, response) => {
+    const entry = lookupStudentEntry(request.query.studentId, response);
+    if (!entry) return;
+    if (session.phase !== '已結束') {
+      return response.status(409).json({ error: { code: 'RESULTS_NOT_AVAILABLE', message: '活動結束後才能讀取結果。' } });
+    }
+    const results = buildStudentResults({
+      questions: session.questions,
+      submissions: submissions.listSubmissions(),
+      groups: session.groups.list(),
+      groupId: entry.group.id,
+    });
+    return response.json({ data: results });
   });
 
   function guidedNotesPhaseGuard(_request, response, next) {
