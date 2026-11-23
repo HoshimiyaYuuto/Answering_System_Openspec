@@ -87,7 +87,7 @@ development 種子：100 組、50 題；題 10、20、30、40、50 為 2 空格�
 | N2 | B 先開著題 1 的作答頁（不輸入）；A 在題 1 輸入 `H2O` 送出 | 2 秒內 B 題號格題 1 變「已送出」；B 作答頁輸入框鎖定並顯示 `H2O`，沒有送出按鈕 | 符合預期 |
 | N3 | 同時看 C 的畫面與 F12 Network 的 events 內容 | C 沒有任何變化，EventStream 沒有 `submission` | 符合預期 |
 | N4 | B 在題 2 輸入 `bbb`（不送出）；A 送出題 2 | B 的題 2 鎖定並顯示 A 的答案，草稿 `bbb` 被清除 | 符合預期 |
-| N5 | A 的 DevTools 節流改為 Slow 3G，在題 3 輸入 fromA 並按送出；2 秒內用 PowerShell 以 B 的 studentId 提交題 3，答案為 fromB。結束後用 PowerShell 查詢：`Invoke-RestMethod "http://localhost:3000/api/student/submissions?studentId=<A 的 studentId>" \| ConvertTo-Json -Depth 5` | server 先收到的那一筆被記錄（Slow 3G 時通常是 fromB），只有一筆；後送的一方（A）顯示「本組已由其他裝置送出」並顯示被記錄的答案；A、B 的題 3 最後都是鎖定、顯示同一個答案，沒有錯誤畫面或空白 | 符合預期 |
+| N5 | A 的 DevTools 節流改為 Slow 3G，在題 3 輸入 fromA 並按送出；2 秒內用 PowerShell 以 B 的 studentId 提交題 3，答案為 fromB。結束後用 PowerShell 查詢：`Invoke-RestMethod "http://localhost:3000/api/student/submissions?studentId=<A 的 studentId>" \| ConvertTo-Json -Depth 5` | server 先收到的那一筆被記錄，只有一筆；後送的一方（A）顯示「本組已由其他裝置送出」並顯示被記錄的答案；A、B 的題 3 最後都是鎖定、顯示同一個答案，沒有錯誤畫面或空白 | 符合預期，server 記錄的是 fromA；B 顯示本組已由其他裝置送出並顯示 fromA；只有一筆 |
 | N6 | B 的 DevTools 切 Offline 約 10 秒，期間用 PowerShell 以 A 的 studentId 提交題 5，再取消 Offline | 幾秒內 B 出現題 5「已送出」 | 符合預期 |
 | N7 | 停止 server 超過 40 秒 | A 顯示「重新連線中…」 | 符合預期 |
 | N8 | 重新啟動 server（記憶體清空，進場紀錄消失） | A 約數秒內回到選組畫面並說明進場狀態已失效，沒有卡在連線中；Local Storage 的草稿仍在 | 符合預期 |
@@ -101,14 +101,16 @@ development 種子：100 組、50 題；題 10、20、30、40、50 為 2 空格�
 | P1 | 在 A 的 F12 Network 搜尋 `rank` | 所有 API 回應與事件都沒有 `rank` 欄位 | 符合預期 |
 | P2 | 檢視 A、B、C 各階段的畫面 | 沒有順位、他組是否送出或題目是否被搶走的任何文字 | 符合預期 |
 
-## 8. 老師控制台交叉確認（需 `add-teacher-monitoring` 已合併）(代測)
+## 8. 老師控制台交叉確認（需 `add-teacher-monitoring` 已合併）(待測)
 
 | 編號 | 操作 | 預期 | 結果 |
 | --- | --- | --- | --- |
-| T1 | 以老師身分開 `http://localhost:3000/teacher/`，學生 A 在題 1 送出 | 作答監看顯示題 1「已送出 1／M 組」、第 1 名為第 1 組與其答案 | |
-| T2 | 同時看學生頁 | 學生頁沒有顯示名次 | |
+| T1 | 以老師身分開 `http://localhost:3000/teacher/`，學生 A 在題 1 送出 | 作答監看顯示題 1「已送出 1／M 組」、第 1 名為第 1 組與其答案 | 符合預期 |
+| T2 | 同時看學生頁 | 學生頁沒有顯示名次 | 符合預期 |
 
 ## 9. 規格對照
+
+以下情境只由自動測試涵蓋，沒有手動步驟：草稿空格數不符被丟棄、localStorage 不可用時降級、送出錯誤對應動作（drafts.test.js、logic.test.js）。
 
 | 規格 Requirement | 對應步驟 |
 | --- | --- |
@@ -127,7 +129,10 @@ development 種子：100 組、50 題；題 10、20、30、40、50 為 2 空格�
 | 項目 | 說明 |
 | --- | --- |
 | development 種子的題組提示（「第 N 題第一空」） | 來自 `server/index.js` 的假資料，不是畫面寫死的文字；匯入真實學習單時會顯示學習單上的提示 |
-| 其他觀察 | |
+| 同組兩台裝置幾乎同時送出同一題 | 以 server 收到順序為準，後到者顯示「本組已由其他裝置送出」並顯示先到的答案，符合 buzz-in 與 UI 規格 |
+| 題組只填一格的錯誤提示 | 提示顯示在未填的空格下，比規格寫的「需填寫所有空格」更具體，意圖相同 |
+| 單題輸入框的提示文字 | 原本沒有，已於 commit 8bde40d 修正 |
+| 打開題目不輸入就返回標示「草稿」 | 已於 8bde40d 修正，驗證見 S4 |
 
 ## 11. 未測項目
 
@@ -135,13 +140,13 @@ development 種子：100 組、50 題；題 10、20、30、40、50 為 2 空格�
 - 100 位學生同時在線時的畫面表現。
 - 螢幕閱讀器與鍵盤操作。
 - 結束後的結果頁（屬於 `add-student-results`）。
-- N5（同時送出同一題）若未能完成，請在此註明。
-- 第 8 節若 `add-teacher-monitoring` 尚未合併，請在此註明並待合併後補測。
+- 第 8 節 T1、T2（老師控制台交叉確認）：`add-teacher-monitoring` 尚未合併，待合併後補測。
+- 事件重複抵達時的冪等性：只由 S8、N2 間接涵蓋（自己送出後也會收到同一個事件，畫面沒有重複），沒有單獨的手動步驟。
 
 ## 12. 結論
 
 | 項目 | 內容 |
 | --- | --- |
 | 自動測試 | 通過 |
-| 手動驗證 | |
-| 是否可歸檔 | |
+| 手動驗證 | 通過 |
+| 是否可歸檔 | 通過 |
