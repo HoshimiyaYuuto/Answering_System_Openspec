@@ -13,6 +13,8 @@ import {
 import { createTeacherAuth, TeacherAuthError } from './teacher-auth.js';
 import { createSubmissions } from './submissions.js';
 import { buildStudentResults } from './student-results.js';
+import { computeResults } from './results.js';
+import { buildMonitor } from './teacher-monitor.js';
 
 const TEACHER_COOKIE = 'teacher_session';
 
@@ -152,6 +154,13 @@ export function createApplication({
       const current = session.groups.lookup(client.studentId, session.phase);
       if (current.data?.valid && current.data.group.id === submission.groupId) {
         safeWrite(client.response, `event: submission\ndata: ${payload}\n\n`);
+      }
+    }
+    // 老師連線只收到「監看資料已改變」，內容不含作答；每次送出時才檢查 token，登出後就不再通知
+    const notice = JSON.stringify({ serverTime: new Date().toISOString() });
+    for (const client of eventClients) {
+      if (client.teacherToken && teacherAuth.isValid(client.teacherToken)) {
+        safeWrite(client.response, `event: monitor\ndata: ${notice}\n\n`);
       }
     }
   });
@@ -347,6 +356,14 @@ export function createApplication({
     response.json({ data: { current: guidedNotes.currentSummary() } });
   });
 
+  app.get('/api/teacher/monitor', requireTeacher, (_request, response) => {
+    const all = submissions.listSubmissions();
+    const results = computeResults({ questions: session.questions, submissions: all, now: Date.now() });
+    response.json({
+      data: buildMonitor({ phase: session.phase, questions: session.questions, groups: session.groups.list(), submissions: all, results }),
+    });
+  });
+
   if (exposeTestErrorRoute) {
     app.get('/api/__test__/error', () => {
       throw new Error('test-only-secret-marker');
@@ -356,6 +373,12 @@ export function createApplication({
   app.get('/api/events', (request, response) => {
     const studentId = request.query.studentId;
     if (studentId !== undefined && !lookupStudentEntry(studentId, response)) return;
+    const asTeacher = request.query.role === 'teacher';
+    if (asTeacher && !isTeacher(request)) {
+      return response.status(401).json({
+        error: { code: 'TEACHER_AUTH_REQUIRED', message: '請先以老師密碼登入。' },
+      });
+    }
     response.status(200);
     response.set({
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -365,7 +388,11 @@ export function createApplication({
     });
     response.flushHeaders();
     response.write('retry: 3000\n\n');
-    const client = { response, ...(studentId !== undefined ? { studentId } : {}) };
+    const client = {
+      response,
+      ...(studentId !== undefined ? { studentId } : {}),
+      ...(asTeacher ? { teacherToken: readCookie(request, TEACHER_COOKIE) } : {}),
+    };
     eventClients.add(client);
 
     const heartbeat = setInterval(() => {

@@ -1,5 +1,9 @@
 # Spec Delta: student-answering-ui
 
+## Purpose
+
+提供學生在搶答活動中瀏覽題目、填寫與送出答案的介面，並以本機草稿和組別限定的即時同步維持作答狀態；學生端不揭露順位或其他組別的資訊。
+
 ## ADDED Requirements
 
 ### Requirement: Student page shows a question grid during the buzzer phase
