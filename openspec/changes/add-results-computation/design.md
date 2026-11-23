@@ -16,7 +16,7 @@
 
 **Non-Goals:**
 
-- 快取或增量計算：50 組 × 50 題最多 2,500 筆，每次全部重算即可。
+- 快取或增量計算：組數上限目前為 100（D20 尚待與 SpecKit 統一），100 組 × 50 題最多 5,000 筆，每次全部重算即可。
 - 接上任何呼叫端：`add-guided-notes-export` 等 change 各自接上。
 
 ## Decisions
@@ -59,4 +59,4 @@ export function computeResults({ questions, submissions, fairRankingEnabled = fa
 
 - [`add-buzz-in-submission` 合併時資料形狀改變] → 已核對 PR #8 的 `submissions.js`，欄位與排序一致；測試資料照它的形狀手寫，形狀若改變，`docs/submission-record.md` 必須先改。
 - [公平順位加入後需要改動推導流程] → 第 2 點的步驟是「每題獨立」，公平順位需要「依題目判定先後累計成功題數」，屆時會改寫第 2、3 步；簽名與輸出不變，所以呼叫端不受影響。
-- [每次全部重算] → 2,500 筆的排序在毫秒內完成；若之後監看頁頻繁呼叫造成負擔，再由呼叫端節流。
+- [每次全部重算] → 5,000 筆的排序在毫秒內完成；若之後監看頁頻繁呼叫造成負擔，再由呼叫端節流。

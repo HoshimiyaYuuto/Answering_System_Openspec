@@ -1,4 +1,5 @@
-import { getEntryNextStep, getPhaseDisplay, getStoredEntryNextStep, isReconnecting, isStaleRequest } from './logic.js';
+import { applySubmission, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, validateAnswers } from './logic.js';
+import { createDraftStore } from './drafts.js';
 
 const selection = document.querySelector('#selection');
 const waiting = document.querySelector('#waiting');
@@ -7,6 +8,20 @@ const status = document.querySelector('#status');
 const refreshButton = document.querySelector('#refresh');
 const groupName = document.querySelector('#group-name');
 const phaseText = document.querySelector('#phase-text');
+const answering = document.querySelector('#answering');
+const answeringMessage = document.querySelector('#answering-message');
+const questionGrid = document.querySelector('#question-grid');
+const questionPage = document.querySelector('#question-page');
+const retryQuestionsButton = document.querySelector('#retry-questions');
+const ended = document.querySelector('#ended');
+
+let draftStorage;
+try {
+  draftStorage = localStorage;
+} catch {
+  draftStorage = undefined;
+}
+const drafts = createDraftStore(draftStorage);
 
 const reconnectBanner = document.createElement('p');
 reconnectBanner.textContent = '重新連線中…';
@@ -24,9 +39,21 @@ let studentId;
 let storedStudentId = false;
 let phase = '準備中';
 let lastEventAt = null;
-let reconnectingAfterError = false;
 let changingGroup = false;
 let groupsRequestId = 0;
+let answeringRequestId = 0;
+let synchronizationRequestId = 0;
+let currentEntry = null;
+let eventSource = null;
+let eventSourceUrl = null;
+let loadedQuestions = [];
+let loadedSubmissions = [];
+let activeQuestionId = null;
+let answeringView = 'grid';
+let isSubmitting = false;
+let questionInputs = [];
+let questionSubmitButton = null;
+let questionBackButton = null;
 
 function createStudentId() {
   const bytes = new Uint8Array(18);
@@ -67,7 +94,12 @@ async function requestJson(path, options) {
 }
 
 function showSelection(message = '') {
+  answeringRequestId += 1;
+  currentEntry = null;
+  ensureEventSource();
   waiting.hidden = true;
+  answering.hidden = true;
+  ended.hidden = true;
   selection.hidden = false;
   loadGroups(message);
 }
@@ -81,14 +113,333 @@ function updateWaitingView() {
 function showEntryResult(response) {
   const next = getEntryNextStep(response);
   if (next.screen === 'waiting') {
-    selection.hidden = true;
-    waiting.hidden = false;
+    currentEntry = next.entry;
     groupName.textContent = next.entry.group.name;
     if (next.entry.phase) phase = next.entry.phase;
-    updateWaitingView();
+    ensureEventSource();
+    showPhaseScreen();
     return;
   }
   showSelection(next.message);
+}
+
+function showPhaseScreen() {
+  const screen = getAnsweringScreen(Boolean(currentEntry?.valid), phase);
+  selection.hidden = screen !== 'select-group';
+  waiting.hidden = screen !== 'waiting';
+  answering.hidden = screen !== 'answering';
+  ended.hidden = screen !== 'ended';
+  if (screen === 'waiting') updateWaitingView();
+  if (screen === 'answering') loadAnsweringData();
+  if (screen === 'ended') {
+    answeringRequestId += 1;
+    questionGrid.replaceChildren();
+    questionPage.replaceChildren();
+    answeringMessage.textContent = '';
+    answeringMessage.hidden = true;
+    questionGrid.hidden = true;
+    answeringView = 'grid';
+    activeQuestionId = null;
+  }
+}
+
+function renderQuestionGrid(questions, submissions) {
+  questionGrid.replaceChildren();
+  for (const question of questions) {
+    const hasSubmission = submissions.some((submission) => submission.questionId === question.id);
+    if (hasSubmission) drafts.remove(studentId, question.id);
+    const hasDraft = drafts.has(studentId, question.id, question.blanks.length);
+    const statusByKey = {
+      unanswered: '未作答',
+      draft: '草稿',
+      submitted: '已送出',
+    };
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = `第 ${question.id} 題：${statusByKey[getQuestionStatus(hasSubmission, hasDraft)]}`;
+    button.addEventListener('click', () => openQuestion(question.id));
+    questionGrid.append(button);
+  }
+}
+
+function showQuestionGrid() {
+  answeringView = 'grid';
+  questionGrid.hidden = false;
+  questionPage.hidden = true;
+  renderQuestionGrid(loadedQuestions, loadedSubmissions);
+}
+
+function openQuestion(questionId) {
+  const question = loadedQuestions.find((item) => item.id === questionId);
+  if (!question) return;
+  activeQuestionId = questionId;
+  answeringView = 'question';
+  renderQuestionPage(question);
+}
+
+function saveCurrentDraft() {
+  if (activeQuestionId === null || !questionInputs.length) return;
+  const values = questionInputs.map((input) => input.value);
+  const question = loadedQuestions.find((item) => item.id === activeQuestionId);
+  if (question) drafts.set(studentId, activeQuestionId, values);
+}
+
+function renderQuestionPage(question, options = {}) {
+  const blanks = [...question.blanks].sort((a, b) => a.index - b.index);
+  const submission = loadedSubmissions.find((item) => item.questionId === question.id);
+  const locked = Boolean(submission);
+  const savedDraft = locked ? null : drafts.get(studentId, question.id, blanks.length);
+  questionPage.replaceChildren();
+  questionInputs = [];
+  questionSubmitButton = null;
+  questionBackButton = null;
+  questionPage.hidden = false;
+  questionGrid.hidden = true;
+
+  const title = document.createElement('h3');
+  title.textContent = `第 ${question.id} 題`;
+  questionPage.append(title);
+
+  const message = document.createElement('p');
+  message.className = 'message';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  message.textContent = options.message || (locked ? '已送出' : '');
+  questionPage.append(message);
+  const validationMessages = [];
+
+  blanks.forEach((blank, index) => {
+    const blankLabel = [blank.prefix, blank.prompt].filter(Boolean).join(' ') || `第 ${question.id} 題第 ${index + 1} 格答案`;
+    const label = document.createElement('label');
+    label.htmlFor = `answer-${question.id}-${index}`;
+    label.textContent = blankLabel;
+    questionPage.append(label);
+
+    const input = document.createElement('input');
+    input.id = `answer-${question.id}-${index}`;
+    input.className = 'answer-input';
+    input.type = 'text';
+    input.minLength = 1;
+    input.setAttribute('aria-label', blankLabel);
+    input.value = locked ? (submission.answers[index] ?? '') : (savedDraft?.[index] ?? '');
+    input.disabled = locked || isSubmitting;
+    questionInputs.push(input);
+    questionPage.append(input);
+
+    const validationMessage = document.createElement('p');
+    validationMessage.className = 'message';
+    validationMessage.setAttribute('role', 'status');
+    validationMessages.push(validationMessage);
+    questionPage.append(validationMessage);
+    input.addEventListener('input', () => {
+      if (!locked) {
+        drafts.set(studentId, question.id, questionInputs.map((item) => item.value));
+        renderQuestionGrid(loadedQuestions, loadedSubmissions);
+      }
+    });
+  });
+
+  if (options.validationErrors) {
+    for (const error of options.validationErrors) {
+      if (error.index !== null && validationMessages[error.index]) {
+        validationMessages[error.index].textContent = error.reason === 'too-long'
+          ? '答案不可超過 200 字。'
+          : error.reason === 'empty'
+            ? '請填寫此空格。'
+            : '答案格式錯誤。';
+      } else if (error.reason === 'wrong-count') {
+        message.textContent = '請填寫所有空格。';
+      }
+    }
+  }
+
+  if (!locked) {
+    questionSubmitButton = document.createElement('button');
+    questionSubmitButton.type = 'button';
+    questionSubmitButton.textContent = isSubmitting ? '送出中…' : '送出答案';
+    questionSubmitButton.disabled = isSubmitting;
+    questionSubmitButton.addEventListener('click', submitCurrentQuestion);
+    questionPage.append(questionSubmitButton);
+  }
+
+  questionBackButton = document.createElement('button');
+  questionBackButton.type = 'button';
+  questionBackButton.className = 'secondary';
+  questionBackButton.textContent = '返回題號格';
+  questionBackButton.disabled = isSubmitting;
+  questionBackButton.addEventListener('click', () => {
+    saveCurrentDraft();
+    showQuestionGrid();
+  });
+  questionPage.append(questionBackButton);
+}
+
+function setQuestionControlsDisabled(disabled) {
+  for (const input of questionInputs) input.disabled = disabled;
+  if (questionSubmitButton) questionSubmitButton.disabled = disabled;
+  if (questionBackButton) questionBackButton.disabled = disabled;
+}
+
+async function refreshSubmissions() {
+  const query = `studentId=${encodeURIComponent(studentId)}`;
+  const response = await requestJson(`/api/student/submissions?${query}`);
+  const submissions = projectSubmissions(response?.data?.submissions);
+  loadedSubmissions = submissions;
+  renderQuestionGrid(loadedQuestions, loadedSubmissions);
+  return submissions;
+}
+
+function isValidQuestionId(questionId) {
+  return (typeof questionId === 'number' && Number.isFinite(questionId))
+    || (typeof questionId === 'string' && questionId.length > 0);
+}
+
+function projectSubmissions(submissions) {
+  if (!Array.isArray(submissions)) throw new Error('伺服器回應格式錯誤。');
+  return submissions.map((submission) => {
+    if (!submission || typeof submission !== 'object'
+      || !isValidQuestionId(submission.questionId)
+      || !Array.isArray(submission.answers)
+      || !submission.answers.every((answer) => typeof answer === 'string')
+      || typeof submission.submittedAt !== 'string') {
+      throw new Error('伺服器回應格式錯誤。');
+    }
+    return {
+      questionId: submission.questionId,
+      answers: submission.answers.slice(),
+      submittedAt: submission.submittedAt,
+    };
+  });
+}
+
+async function submitCurrentQuestion() {
+  if (isSubmitting || activeQuestionId === null || loadedSubmissions.some((item) => item.questionId === activeQuestionId)) return;
+  const question = loadedQuestions.find((item) => item.id === activeQuestionId);
+  if (!question) return;
+  const result = validateAnswers(questionInputs.map((input) => input.value), question.blanks.length);
+  if (!result.ok) {
+    saveCurrentDraft();
+    renderQuestionPage(question, { validationErrors: result.errors });
+    return;
+  }
+
+  isSubmitting = true;
+  setQuestionControlsDisabled(true);
+  if (questionSubmitButton) questionSubmitButton.textContent = '送出中…';
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 10_000);
+  try {
+    const response = await requestJson('/api/student/submissions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studentId, questionId: activeQuestionId, answers: result.answers }),
+      signal: controller.signal,
+    });
+    const data = response?.data ?? {};
+    loadedSubmissions = applySubmission(loadedSubmissions, {
+      questionId: activeQuestionId,
+      answers: result.answers,
+      submittedAt: data.submittedAt,
+    });
+    drafts.remove(studentId, activeQuestionId);
+    renderQuestionGrid(loadedQuestions, loadedSubmissions);
+    renderQuestionPage(question);
+  } catch (caught) {
+    const error = timedOut
+      ? Object.assign(new Error('伺服器沒有回應'), { name: 'AbortError' })
+      : caught;
+    if (error instanceof TypeError && !error.code) error.type = 'network';
+    const next = getSubmitErrorNextStep(error);
+    if (next.action === 'refresh-submissions') {
+      try {
+        const submissions = await refreshSubmissions();
+        const matching = submissions.find((item) => item.questionId === activeQuestionId);
+        if (matching) {
+          drafts.remove(studentId, activeQuestionId);
+          renderQuestionPage(question, { message: '本組已由其他裝置送出' });
+        } else {
+          messageForCurrentQuestion(error.message);
+        }
+      } catch (refreshError) {
+        messageForCurrentQuestion(refreshError.message);
+      }
+    } else if (next.action === 'refresh-session') {
+      saveCurrentDraft();
+      try {
+        const session = await requestJson('/api/session');
+        phase = session.data.phase;
+        if (phase === '已結束') showPhaseScreen();
+        else messageForCurrentQuestion(error.message);
+      } catch (refreshError) {
+        messageForCurrentQuestion(refreshError.message);
+      }
+    } else if (next.action === 'restore-entry') {
+      saveCurrentDraft();
+      showSelection('進場狀態已失效，請重新選擇組別。');
+    } else if (next.action === 'reload-questions') {
+      saveCurrentDraft();
+      await loadAnsweringData();
+      messageForCurrentQuestion(error.message);
+    } else if (next.action === 'retry') {
+      messageForCurrentQuestion('伺服器沒有回應');
+    } else {
+      messageForCurrentQuestion(error.message);
+    }
+  } finally {
+    clearTimeout(timeout);
+    isSubmitting = false;
+    if (answeringView === 'question' && activeQuestionId !== null) {
+      const isLocked = loadedSubmissions.some((item) => item.questionId === activeQuestionId);
+      setQuestionControlsDisabled(isLocked);
+      if (questionBackButton) questionBackButton.disabled = false;
+      if (questionSubmitButton && !isLocked) questionSubmitButton.textContent = '送出答案';
+    }
+  }
+}
+
+function messageForCurrentQuestion(text) {
+  const message = questionPage.querySelector('[role="status"]');
+  if (message) message.textContent = text;
+}
+
+async function loadAnsweringData() {
+  if (!studentId || phase !== '搶答中' || !currentEntry?.valid) return;
+  const requestId = ++answeringRequestId;
+  answeringMessage.textContent = '載入題目中…';
+  answeringMessage.hidden = false;
+  questionGrid.hidden = true;
+  retryQuestionsButton.hidden = true;
+  try {
+    const query = `studentId=${encodeURIComponent(studentId)}`;
+    const [questionsResponse, submissionsResponse] = await Promise.all([
+      requestJson(`/api/student/questions?${query}`),
+      requestJson(`/api/student/submissions?${query}`),
+    ]);
+    if (isStaleRequest(requestId, answeringRequestId)) return;
+    const questions = questionsResponse?.data?.questions;
+    const submissions = projectSubmissions(submissionsResponse?.data?.submissions);
+    if (!Array.isArray(questions)) throw new Error('伺服器回應格式錯誤。');
+    loadedQuestions = questions;
+    loadedSubmissions = submissions;
+    renderQuestionGrid(loadedQuestions, loadedSubmissions);
+    answeringMessage.textContent = '';
+    answeringMessage.hidden = true;
+    questionGrid.hidden = answeringView !== 'grid';
+    questionPage.hidden = answeringView !== 'question';
+  } catch (error) {
+    if (isStaleRequest(requestId, answeringRequestId)) return;
+    if (error.code === 'STUDENT_NOT_ENTERED') {
+      showSelection('進場狀態已失效，請重新選擇組別。');
+      return;
+    }
+    answeringMessage.textContent = '無法載入題目，請稍後再試';
+    answeringMessage.hidden = false;
+    retryQuestionsButton.hidden = false;
+  }
 }
 
 async function loadGroups(message = '') {
@@ -157,14 +508,29 @@ async function enterGroup(groupId, button) {
 }
 
 async function synchronizeFromServer() {
+  const requestId = ++synchronizationRequestId;
   try {
-    const [session] = await Promise.all([
+    const submissionsPath = studentId && currentEntry?.valid
+      ? `/api/student/submissions?studentId=${encodeURIComponent(studentId)}`
+      : null;
+    const [session, , submissionsResponse] = await Promise.all([
       requestJson('/api/session'),
       restoreEntry(),
+      submissionsPath ? requestJson(submissionsPath) : Promise.resolve(null),
     ]);
-    if (!waiting.hidden) {
+    if (isStaleRequest(requestId, synchronizationRequestId)) return;
+    if (currentEntry?.valid) {
+      const submissions = projectSubmissions(submissionsResponse?.data?.submissions);
+      const phaseChanged = phase !== session.data.phase;
+      if (phaseChanged && session.data.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
       phase = session.data.phase;
-      updateWaitingView();
+      loadedSubmissions = submissions;
+      renderQuestionGrid(loadedQuestions, loadedSubmissions);
+      if (answeringView === 'question' && activeQuestionId !== null) {
+        const question = loadedQuestions.find((item) => item.id === activeQuestionId);
+        if (question && loadedSubmissions.some((item) => item.questionId === activeQuestionId)) renderQuestionPage(question);
+      }
+      if (phaseChanged) showPhaseScreen();
     }
   } catch (error) {
     if (!waiting.hidden) status.textContent = error.message;
@@ -172,12 +538,16 @@ async function synchronizeFromServer() {
 }
 
 function handlePhase(event) {
-  lastEventAt = Date.now();
-  reconnectBanner.hidden = true;
   try {
+    if (typeof event.data !== 'string') return;
     const update = JSON.parse(event.data);
+    if (!update || typeof update !== 'object' || Array.isArray(update)) return;
+    if (!['準備中', '搶答中', '已結束'].includes(update.phase)) return;
+    lastEventAt = Date.now();
+    reconnectBanner.hidden = true;
+    if (update.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
     phase = update.phase;
-    if (!waiting.hidden) updateWaitingView();
+    if (currentEntry?.valid) showPhaseScreen();
   } catch {
     // Ignore malformed event data; the next session snapshot will resynchronize.
   }
@@ -188,25 +558,100 @@ function handleHeartbeat() {
   reconnectBanner.hidden = true;
 }
 
-const eventSource = new EventSource('/api/events');
-eventSource.addEventListener('phase', handlePhase);
-eventSource.addEventListener('heartbeat', handleHeartbeat);
-eventSource.addEventListener('error', () => {
-  reconnectingAfterError = true;
-});
-eventSource.addEventListener('open', () => {
-  if (!reconnectingAfterError) return;
-  reconnectingAfterError = false;
-  lastEventAt = Date.now();
-  reconnectBanner.hidden = true;
-  synchronizeFromServer();
-});
+function handleSubmission(event) {
+  try {
+    if (typeof event.data !== 'string') return;
+    const update = JSON.parse(event.data);
+    if (!update || typeof update !== 'object' || Array.isArray(update)) return;
+    const validQuestionId = (typeof update.questionId === 'number' && Number.isFinite(update.questionId))
+      || (typeof update.questionId === 'string' && update.questionId.length > 0);
+    if (!currentEntry?.valid || !studentId || !validQuestionId || !Array.isArray(update.answers)
+      || !update.answers.every((answer) => typeof answer === 'string')
+      || typeof update.submittedAt !== 'string') return;
+
+    const submission = {
+      questionId: update.questionId,
+      answers: update.answers.slice(),
+      submittedAt: update.submittedAt,
+    };
+    loadedSubmissions = applySubmission(loadedSubmissions, submission);
+    drafts.remove(studentId, submission.questionId);
+    renderQuestionGrid(loadedQuestions, loadedSubmissions);
+    if (answeringView === 'question' && activeQuestionId === submission.questionId) {
+      const question = loadedQuestions.find((item) => item.id === submission.questionId);
+      if (question) renderQuestionPage(question);
+    }
+  } catch {
+    // Ignore malformed event data; a later synchronization will reload the group's submissions.
+  }
+}
+
+function ensureEventSource() {
+  const targetUrl = currentEntry?.valid && studentId
+    ? `/api/events?studentId=${encodeURIComponent(studentId)}`
+    : '/api/events';
+  if (eventSource && eventSourceUrl === targetUrl && eventSource.readyState !== 2) return;
+  if (eventSource) eventSource.close();
+
+  eventSourceUrl = targetUrl;
+  let hasOpened = false;
+  let reconnecting = false;
+  const source = new EventSource(targetUrl);
+  eventSource = source;
+  source.addEventListener('phase', handlePhase);
+  source.addEventListener('heartbeat', handleHeartbeat);
+  source.addEventListener('submission', handleSubmission);
+  source.addEventListener('error', () => {
+    if (source !== eventSource) return;
+    if (getEventErrorNextStep(source.readyState).action === 'restore-entry') {
+      reconnecting = false;
+      if (currentEntry?.valid && eventSourceUrl === `/api/events?studentId=${encodeURIComponent(studentId)}`) {
+        confirmEntryAfterClosedEventSource(source);
+      }
+      return;
+    }
+    reconnecting = true;
+  });
+  source.addEventListener('open', () => {
+    if (source !== eventSource) return;
+    lastEventAt = Date.now();
+    reconnectBanner.hidden = true;
+    if (!hasOpened) {
+      hasOpened = true;
+      return;
+    }
+    if (!reconnecting) return;
+    reconnecting = false;
+    synchronizeFromServer();
+  });
+}
+
+async function confirmEntryAfterClosedEventSource(source) {
+  if (!studentId) {
+    showSelection('進場狀態已失效，請重新選擇組別。');
+    return;
+  }
+  try {
+    const entry = await requestJson(`/api/student/entry?studentId=${encodeURIComponent(studentId)}`);
+    if (source !== eventSource) return;
+    const next = getStoredEntryNextStep(storedStudentId, entry);
+    if (next.screen === 'waiting') {
+      showEntryResult(entry);
+      return;
+    }
+    showSelection(next.message || '進場狀態已失效，請重新選擇組別。');
+  } catch (error) {
+    if (source !== eventSource) return;
+    if (error.code === 'STUDENT_NOT_ENTERED') showSelection('進場狀態已失效，請重新選擇組別。');
+  }
+}
 
 setInterval(() => {
   reconnectBanner.hidden = !isReconnecting(lastEventAt);
 }, 5_000);
 
 refreshButton.addEventListener('click', () => loadGroups());
+retryQuestionsButton.addEventListener('click', () => loadAnsweringData());
 changeGroupButton.addEventListener('click', () => {
   if (phase !== '準備中') return;
   changingGroup = true;
@@ -215,5 +660,6 @@ changeGroupButton.addEventListener('click', () => {
 
 studentId = getStoredStudentId();
 storedStudentId = Boolean(studentId);
+ensureEventSource();
 if (storedStudentId) restoreEntry();
 else showSelection();

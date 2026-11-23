@@ -66,6 +66,18 @@ test('notifies subscribers and supports unsubscribe', () => {
   assert.equal(received[0].rank, 1);
 });
 
+test('clear resets records and ranks while retaining existing subscribers', () => {
+  const store = makeStore();
+  const received = [];
+  store.subscribe((submission) => received.push(submission));
+  assert.equal(submit(store, 1, 1).submission.rank, 1);
+  store.clear();
+  const afterClear = submit(store, 1, 2);
+  assert.equal(afterClear.ok, true);
+  assert.equal(afterClear.submission.rank, 1);
+  assert.deepEqual(received.map(({ rank }) => rank), [1, 1]);
+});
+
 test('a failing subscriber does not affect storage, submit result, or other subscribers', () => {
   const store = makeStore();
   let notified = false;

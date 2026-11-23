@@ -18,6 +18,7 @@ import {
   reduceImport,
 } from './import-logic.js';
 import { createExportState, fileNameFromDisposition, getExportView, reduceExport } from './export-logic.js';
+import { createMonitorState, getMonitorView, reduceMonitor } from './monitor-logic.js';
 
 class ApiError extends Error {
   constructor(message, code, status) {
@@ -104,8 +105,7 @@ function renderConsole() {
 function dispatchConsole(event) {
   consoleState = reduceConsole(consoleState, event);
   renderConsole();
-  // 離開控制台（登出或登入失效）時清掉匯出狀態，重新登入後不會殘留上一次的訊息
-  if (consoleState.view !== 'console') dispatchExport({ type: 'reset' });
+  if (consoleState.view !== 'console') leaveConsole();
 }
 
 function handleAuthError(error) {
@@ -134,14 +134,24 @@ async function loadSummary() {
 
 function openEvents() {
   if (events) return;
-  events = new EventSource('/api/events');
-  events.addEventListener('open', () => {
+  // 以老師身分連線才會收到監看通知；未登入時 server 回 401，EventSource 會直接關閉
+  const source = new EventSource('/api/events?role=teacher');
+  events = source;
+  source.addEventListener('open', () => {
     // 連上或重新連上（例如 server 重新啟動）時取得權威快照；登入失效會由匯入狀態的 401 帶回登入畫面
     if (consoleState.view !== 'console') return;
     loadSummary();
     loadImportStatus();
     loadExportConfig();
+    monitorChanged();
   });
+  source.addEventListener('error', () => {
+    if (source.readyState !== EventSource.CLOSED || events !== source) return;
+    // 連線被拒（例如 server 重啟後登入失效）時不會自動重連，重新確認登入狀態
+    events = null;
+    loadAuth();
+  });
+  source.addEventListener('monitor', () => monitorChanged());
   events.addEventListener('phase', (event) => {
     try {
       const { phase } = JSON.parse(event.data);
@@ -152,7 +162,18 @@ function openEvents() {
       // 格式錯誤的事件直接略過，下面重新讀取摘要
     }
     loadSummary();
+    monitorChanged();
   });
+}
+
+function leaveConsole() {
+  if (events) {
+    events.close();
+    events = null;
+  }
+  dispatchMonitor({ type: 'reset' });
+  // 離開控制台（登出或登入失效）時清掉匯出狀態，重新登入後不會殘留上一次的訊息
+  dispatchExport({ type: 'reset' });
 }
 
 function enterConsole() {
@@ -161,6 +182,7 @@ function enterConsole() {
   loadGroups();
   loadImportStatus();
   loadExportConfig();
+  monitorChanged();
 }
 
 async function loadAuth() {
@@ -241,6 +263,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || consoleState.view !== 'console') return;
   loadSummary();
   loadImportStatus();
+  monitorChanged();
 });
 
 // ---- 組別設定 ----
@@ -563,7 +586,73 @@ exportDownloadButton.addEventListener('click', async () => {
   }
 });
 
+// ---- 作答監看 ----
+
+const monitorTitle = document.querySelector('#monitor-title');
+const monitorHint = document.querySelector('#monitor-hint');
+const monitorList = document.querySelector('#monitor-list');
+let monitorState = createMonitorState();
+// 記住老師展開的題目，重新整理畫面時保持展開
+const openQuestions = new Set();
+
+function renderMonitor() {
+  const view = getMonitorView(monitorState);
+  monitorTitle.textContent = view.title;
+  monitorHint.textContent = view.hint;
+  monitorHint.hidden = view.hint === '';
+  monitorList.replaceChildren(...view.rows.map((row) => {
+    const details = document.createElement('details');
+    details.open = openQuestions.has(row.id);
+    details.addEventListener('toggle', () => {
+      if (details.open) openQuestions.add(row.id);
+      else openQuestions.delete(row.id);
+    });
+    const summary = document.createElement('summary');
+    const label = document.createElement('strong');
+    label.textContent = row.label;
+    summary.append(label, document.createTextNode(row.summary));
+    const prompt = document.createElement('p');
+    prompt.className = 'prompt';
+    prompt.textContent = row.prompt;
+    const list = document.createElement('ul');
+    list.replaceChildren(...row.details.map((line) => {
+      const item = document.createElement('li');
+      item.textContent = line.text;
+      if (line.voided) item.className = 'voided';
+      return item;
+    }));
+    details.append(summary, prompt, list);
+    return details;
+  }));
+}
+
+function dispatchMonitor(event) {
+  monitorState = reduceMonitor(monitorState, event);
+  renderMonitor();
+  if (monitorState.wantsRequest && consoleState.view === 'console') loadMonitor();
+}
+
+function monitorChanged() {
+  dispatchMonitor({ type: 'changed' });
+}
+
+async function loadMonitor() {
+  dispatchMonitor({ type: 'requestMonitor' });
+  const seq = monitorState.requestSeq;
+  try {
+    const { data } = await requestJson('/api/teacher/monitor');
+    dispatchMonitor({ type: 'monitorLoaded', seq, data });
+  } catch (error) {
+    dispatchMonitor({ type: 'monitorFailed', seq });
+    if (!handleAuthError(error) && seq === monitorState.requestSeq) {
+      monitorHint.hidden = false;
+      monitorHint.textContent = `無法取得作答資料：${error.message}`;
+    }
+  }
+}
+
 renderConsole();
 renderImport();
 renderExport();
+renderMonitor();
 loadAuth();

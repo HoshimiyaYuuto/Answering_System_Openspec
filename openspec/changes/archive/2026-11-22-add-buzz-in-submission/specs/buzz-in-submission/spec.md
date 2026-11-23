@@ -1,5 +1,9 @@
 # Spec Delta: buzz-in-submission
 
+## Purpose
+
+學生在搶答中與結束後讀取公開題目、以組別送出整題答案並取得本組的送出狀態；server 以原子方式給出每題唯一的接收順位，且不向學生或公開通道洩露他組的作答進度或順位。
+
 ## ADDED Requirements
 
 ### Requirement: Students read public question blanks after the session starts

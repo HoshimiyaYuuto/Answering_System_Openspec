@@ -75,7 +75,6 @@ export function createSubmissions({ now = () => new Date() } = {}) {
       submissions.length = 0;
       validByQuestionAndGroup.clear();
       nextRankByQuestion.clear();
-      listeners.clear();
     },
   };
 }

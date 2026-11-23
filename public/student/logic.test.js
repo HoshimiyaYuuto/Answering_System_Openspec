@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { getEntryNextStep, getPhaseDisplay, getStoredEntryNextStep, isReconnecting, isStaleRequest } from './logic.js';
+import { applySubmission, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, validateAnswers } from './logic.js';
 
 test('connection is considered stale only after forty seconds without an event', () => {
   assert.equal(isReconnecting(10_000, 50_000), false);
@@ -47,6 +47,50 @@ test('invalidated entry returns to group selection with reason-specific guidance
 
 test('phase display exposes preparation, active, and ended messages with switching only in preparation', () => {
   assert.deepEqual(getPhaseDisplay('準備中'), { message: '請稍候，老師開始活動後再繼續。', canChangeGroup: true });
-  assert.deepEqual(getPhaseDisplay('搶答中'), { message: '搶答已開始，作答功能即將開放', canChangeGroup: false });
+  assert.deepEqual(getPhaseDisplay('搶答中'), { message: '搶答已開始，請作答', canChangeGroup: false });
   assert.deepEqual(getPhaseDisplay('已結束'), { message: '活動已結束', canChangeGroup: false });
+});
+
+test('answering screen and question status cover all states', () => {
+  assert.deepEqual(['select-group', 'waiting', 'answering', 'ended'], [
+    getAnsweringScreen(false, '搶答中'), getAnsweringScreen(true, '準備中'),
+    getAnsweringScreen(true, '搶答中'), getAnsweringScreen(true, '已結束'),
+  ]);
+  assert.deepEqual(['unanswered', 'draft', 'submitted'], [
+    getQuestionStatus(false, false), getQuestionStatus(false, true), getQuestionStatus(true, true),
+  ]);
+});
+
+test('validates trimmed answers using Unicode code point length', () => {
+  assert.deepEqual(validateAnswers(['  答案😀  '], 1), { ok: true, answers: ['答案😀'] });
+  assert.equal(validateAnswers(['x'.repeat(200)], 1).ok, true);
+  assert.deepEqual(validateAnswers(['x'.repeat(201)], 1).errors, [{ index: 0, reason: 'too-long' }]);
+  assert.deepEqual(validateAnswers(['   '], 1).errors, [{ index: 0, reason: 'empty' }]);
+  assert.deepEqual(validateAnswers(['a'], 2).errors, [{ index: null, reason: 'wrong-count' }]);
+  assert.deepEqual(validateAnswers(['😀'.repeat(201)], 1).errors, [{ index: 0, reason: 'too-long' }]);
+});
+
+test('submission updates are idempotent and do not mutate their inputs', () => {
+  const original = [{ questionId: 1, answers: ['old'] }];
+  const incoming = { questionId: 1, answers: ['new'] };
+  const replaced = applySubmission(original, incoming);
+  assert.deepEqual(replaced, [incoming]);
+  assert.notEqual(replaced, original);
+  assert.deepEqual(original[0].answers, ['old']);
+  assert.deepEqual(applySubmission(replaced, incoming), replaced);
+  assert.deepEqual(applySubmission([], { questionId: 2, answers: ['two'] }), [{ questionId: 2, answers: ['two'] }]);
+});
+
+test('submission errors map to the documented next steps', () => {
+  assert.equal(getSubmitErrorNextStep({ code: 'ALREADY_SUBMITTED' }).action, 'refresh-submissions');
+  assert.equal(getSubmitErrorNextStep({ code: 'SUBMISSION_NOT_ALLOWED' }).action, 'refresh-session');
+  assert.equal(getSubmitErrorNextStep({ code: 'STUDENT_NOT_ENTERED' }).action, 'restore-entry');
+  assert.equal(getSubmitErrorNextStep({ code: 'INVALID_ANSWER' }).action, 'show-message');
+  assert.equal(getSubmitErrorNextStep({ code: 'QUESTION_NOT_FOUND' }).action, 'reload-questions');
+  assert.equal(getSubmitErrorNextStep({ name: 'TimeoutError' }).action, 'retry');
+});
+
+test('event errors distinguish closed and connecting states without browser globals', () => {
+  assert.deepEqual(getEventErrorNextStep(2), { action: 'restore-entry' });
+  assert.deepEqual(getEventErrorNextStep(0), { action: 'wait' });
 });
