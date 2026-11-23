@@ -507,6 +507,7 @@ importCancelButton.addEventListener('click', () => {
 const exportDescription = document.querySelector('#export-description');
 const exportWritebackButton = document.querySelector('#export-writeback');
 const exportDownloadButton = document.querySelector('#export-download');
+const exportCsvButton = document.querySelector('#export-csv');
 const exportMessage = document.querySelector('#export-message');
 let exportState = createExportState();
 const exportConfigRequests = createRequestSequence();
@@ -518,6 +519,8 @@ function renderExport() {
   exportWritebackButton.textContent = view.writebackLabel;
   exportDownloadButton.disabled = !view.canDownload;
   exportDownloadButton.textContent = view.downloadLabel;
+  exportCsvButton.disabled = !view.canDownloadCsv;
+  exportCsvButton.textContent = view.csvLabel;
   exportMessage.textContent = view.resultText;
   exportMessage.classList.toggle('ok', view.resultTone === 'ok');
 }
@@ -551,38 +554,54 @@ exportWritebackButton.addEventListener('click', async () => {
   }
 });
 
+// 用 fetch 取得檔案再觸發下載，失敗時才能讀到 JSON 錯誤訊息（xlsx 與 csv 共用）
+async function downloadFile(url, fallbackName) {
+  let response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw new ApiError('伺服器沒有回應，請稍後再試。');
+  }
+  if (!response.ok) {
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      // 非 JSON 回應視為伺服器錯誤
+    }
+    throw new ApiError(body?.error?.message || '伺服器發生錯誤。', body?.error?.code, response.status);
+  }
+  const blob = await response.blob();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = fileNameFromDisposition(response.headers.get('Content-Disposition'), fallbackName);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 0);
+}
+
 exportDownloadButton.addEventListener('click', async () => {
   if (!getExportView(exportState).canDownload) return;
   dispatchExport({ type: 'requestDownload' });
   try {
-    // 用 fetch 取得檔案，失敗時才能讀到 JSON 錯誤訊息
-    let response;
-    try {
-      response = await fetch('/api/teacher/guided-notes/export');
-    } catch {
-      throw new ApiError('伺服器沒有回應，請稍後再試。');
-    }
-    if (!response.ok) {
-      let body = null;
-      try {
-        body = await response.json();
-      } catch {
-        // 非 JSON 回應視為伺服器錯誤
-      }
-      throw new ApiError(body?.error?.message || '伺服器發生錯誤。', body?.error?.code, response.status);
-    }
-    const blob = await response.blob();
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = fileNameFromDisposition(response.headers.get('Content-Disposition'));
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(link.href), 0);
+    await downloadFile('/api/teacher/guided-notes/export', 'guided-notes-answers.xlsx');
     dispatchExport({ type: 'downloadDone' });
   } catch (error) {
     if (handleAuthError(error)) return;
     dispatchExport({ type: 'downloadFailed', message: error.message });
+  }
+});
+
+exportCsvButton.addEventListener('click', async () => {
+  if (!getExportView(exportState).canDownloadCsv) return;
+  dispatchExport({ type: 'requestCsv' });
+  try {
+    await downloadFile('/api/teacher/results/csv', 'results.csv');
+    dispatchExport({ type: 'csvDone' });
+  } catch (error) {
+    if (handleAuthError(error)) return;
+    dispatchExport({ type: 'csvFailed', message: error.message });
   }
 });
 

@@ -38,6 +38,12 @@ export function reduceExport(state, event) {
       return { ...state, action: 'idle', result: { tone: 'ok', text: '已下載含答案的 xlsx。' } };
     case 'downloadFailed':
       return { ...state, action: 'idle', result: { tone: 'error', text: event.message || '下載失敗。' } };
+    case 'requestCsv':
+      return { ...state, action: 'downloadingCsv', result: null };
+    case 'csvDone':
+      return { ...state, action: 'idle', result: { tone: 'ok', text: '已下載 CSV。' } };
+    case 'csvFailed':
+      return { ...state, action: 'idle', result: { tone: 'error', text: event.message || '下載失敗。' } };
     case 'reset':
       return createExportState();
     default:
@@ -68,8 +74,11 @@ export function getExportView(state) {
     description: descriptions[view],
     canWriteback: idle && view === 'ready',
     canDownload: idle && view !== 'notEnded' && view !== 'noImport',
+    // csv 是整場作答紀錄，與學習單來源與服務帳號無關，只看是否已結束
+    canDownloadCsv: idle && state.phase === ENDED,
     writebackLabel: state.action === 'writing' ? '寫回中…' : '寫回 Google 試算表',
     downloadLabel: state.action === 'downloading' ? '下載中…' : '下載 xlsx',
+    csvLabel: state.action === 'downloadingCsv' ? '下載中…' : '下載 CSV',
     resultText: state.result?.text ?? '',
     resultTone: state.result?.tone ?? null,
   };

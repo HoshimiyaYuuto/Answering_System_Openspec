@@ -100,3 +100,44 @@ test('download file names come from Content-Disposition', () => {
   assert.equal(fileNameFromDisposition('attachment; filename="a.xlsx"'), 'a.xlsx');
   assert.equal(fileNameFromDisposition(null), 'guided-notes-answers.xlsx');
 });
+
+// ---- 下載 CSV（add-results-csv-export） ----
+
+test('csv download is disabled until the session ends', () => {
+  for (const phase of [null, '準備中', '搶答中']) {
+    const view = getExportView(apply(linkConfigured, { type: 'phaseChanged', phase }));
+    assert.equal(view.canDownloadCsv, false);
+    assert.equal(view.csvLabel, '下載 CSV');
+  }
+});
+
+test('csv download is available after the end regardless of import source or configuration', () => {
+  const sources = [
+    { type: 'configLoaded', configured: true, serviceAccountEmail: EMAIL, target: 'link' },
+    { type: 'configLoaded', configured: false, serviceAccountEmail: null, target: 'link' },
+    { type: 'configLoaded', configured: true, serviceAccountEmail: EMAIL, target: 'file' },
+    { type: 'configLoaded', configured: false, serviceAccountEmail: null, target: 'file' },
+  ];
+  for (const config of sources) assert.equal(getExportView(apply(ended, config)).canDownloadCsv, true, JSON.stringify(config));
+  // 設定尚未讀到時也可以下載 csv
+  assert.equal(getExportView(apply(ended)).canDownloadCsv, true);
+});
+
+test('every action disables all three buttons and the csv label shows progress', () => {
+  for (const request of ['requestWriteback', 'requestDownload', 'requestCsv']) {
+    const view = getExportView(apply(ended, linkConfigured, { type: request }));
+    assert.deepEqual([view.canWriteback, view.canDownload, view.canDownloadCsv], [false, false, false], request);
+  }
+  assert.equal(getExportView(apply(ended, linkConfigured, { type: 'requestCsv' })).csvLabel, '下載中…');
+});
+
+test('csv results are shown and reset clears them', () => {
+  const done = apply(ended, linkConfigured, { type: 'requestCsv' }, { type: 'csvDone' });
+  assert.equal(getExportView(done).resultText, '已下載 CSV。');
+  assert.equal(getExportView(done).resultTone, 'ok');
+  assert.equal(getExportView(done).canDownloadCsv, true);
+  const failed = apply(ended, linkConfigured, { type: 'requestCsv' }, { type: 'csvFailed', message: '活動結束後才能匯出。' });
+  assert.equal(getExportView(failed).resultText, '活動結束後才能匯出。');
+  assert.equal(getExportView(failed).resultTone, 'error');
+  assert.deepEqual(reduceExport(done, { type: 'reset' }), createExportState());
+});
