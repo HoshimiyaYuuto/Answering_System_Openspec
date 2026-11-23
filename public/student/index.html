@@ -47,6 +47,13 @@
     </section>
     <section id="ended" class="card" hidden aria-labelledby="ended-title">
       <h2 id="ended-title">活動已結束</h2>
+      <section id="results-section" hidden aria-label="活動結果">
+        <p id="results-summary" hidden></p>
+        <ul id="results-list" hidden></ul>
+        <p id="results-loading" class="hint" aria-live="polite" hidden>正在載入結果…</p>
+        <p id="results-error" class="message" role="status" aria-live="polite" hidden></p>
+        <button id="results-retry" class="secondary" type="button" hidden>重試</button>
+      </section>
     </section>
   </main>
   <script type="module" src="/student/app.js"></script>

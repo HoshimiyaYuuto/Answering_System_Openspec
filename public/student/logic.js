@@ -100,3 +100,52 @@ export function getEventErrorNextStep(readyState) {
   if (readyState === 0) return { action: 'wait' };
   return { action: 'wait' };
 }
+
+export function formatAnswers(blanks, answers) {
+  const orderedBlanks = Array.isArray(blanks)
+    ? blanks.map((blank, originalIndex) => ({ blank, originalIndex }))
+      .sort((left, right) => left.blank.index - right.blank.index || left.originalIndex - right.originalIndex)
+    : [];
+  const values = Array.isArray(answers) ? answers : [];
+  if (orderedBlanks.length === 1 && !orderedBlanks[0].blank.prefix) {
+    const answer = values[0];
+    return typeof answer === 'string' ? answer : '';
+  }
+  return orderedBlanks.map(({ blank }, index) => {
+    const answer = values[index];
+    return `${blank.prefix ?? ''}${typeof answer === 'string' ? answer : ''}`;
+  }).join('；');
+}
+
+export function buildResultsRows(results) {
+  const questions = Array.isArray(results?.questions) ? results.questions : [];
+  const orderedQuestions = [...questions].sort((left, right) => left.questionId - right.questionId);
+  const rows = orderedQuestions.map((question) => {
+    const winner = question?.winner ?? null;
+    const own = question?.own ?? null;
+    const isOwnWinner = own?.isWinner === true;
+    return {
+      questionId: question.questionId,
+      label: `第 ${question.questionId} 題`,
+      winnerText: winner
+        ? `${winner.groupName}：${formatAnswers(question.blanks, winner.answers)}`
+        : '無人作答',
+      ownText: own
+        ? `本組第 ${own.place} 名${isOwnWinner ? '（成功）' : ''}：${formatAnswers(question.blanks, own.answers)}`
+        : '本組未作答',
+      isOwnWinner,
+    };
+  });
+  const ownWins = rows.filter(({ isOwnWinner }) => isOwnWinner).length;
+  const total = rows.length;
+  return {
+    summary: { ownWins, total, text: `本組成功 ${ownWins} 題／共 ${total} 題` },
+    rows,
+  };
+}
+
+export function getResultsLoadNextStep(status) {
+  if (status === 403) return { action: 'restore-entry', message: '無法載入結果，請稍後再試' };
+  if (status === 409) return { action: 'refresh-session', message: '無法載入結果，請稍後再試' };
+  return { action: 'show-message', message: '無法載入結果，請稍後再試' };
+}
