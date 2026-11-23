@@ -31,8 +31,8 @@
 
 ## 6. 整合驗證
 
-- [ ] 6.1 新增 `docs/verification/add-student-answering-ui.md`，比照既有驗證紀錄格式：環境欄（作業系統、Node 版本、瀏覽器與版本，留白）、自動測試（`npm test` 的 tests／pass／fail，留白）、手動驗證步驟（涵蓋 spec 的每個 Requirement，每步有操作與預期結果，結果欄留白；有巢狀陣列輸出的指令要加 `| ConvertTo-Json -Depth 5`），以及「未測項目」：真實手機與區網裝置、100 位學生同時在線的畫面表現、螢幕閱讀器、已結束後的結果頁（屬於 `add-student-results`）。老師控制台的作答監看（需 add-teacher-monitoring 已合併）看得到學生頁送出的答案與名次，而學生頁本身不顯示名次。
-- [ ] 6.2 執行 `npm test`，並完成 6.1 的手動驗證後填寫結果。驗證：全部通過；未通過的項目不得勾選此 task。
+- [x] 6.1 新增 `docs/verification/add-student-answering-ui.md`，比照既有驗證紀錄格式：環境欄（作業系統、Node 版本、瀏覽器與版本，留白）、自動測試（`npm test` 的 tests／pass／fail，留白）、手動驗證步驟（涵蓋 spec 的每個 Requirement，每步有操作與預期結果，結果欄留白；有巢狀陣列輸出的指令要加 `| ConvertTo-Json -Depth 5`），以及「未測項目」：真實手機與區網裝置、100 位學生同時在線的畫面表現、螢幕閱讀器、已結束後的結果頁（屬於 `add-student-results`）。老師控制台的作答監看（需 add-teacher-monitoring 已合併）看得到學生頁送出的答案與名次，而學生頁本身不顯示名次。
+- [x] 6.2 執行 `npm test`，並完成 6.1 的手動驗證後填寫結果。驗證：全部通過；未通過的項目不得勾選此 task。
 
 ## Workflow follow-up
 
