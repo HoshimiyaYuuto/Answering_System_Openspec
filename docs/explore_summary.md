@@ -56,9 +56,9 @@
 | D15 | 倒數：開啟時可選擇是否設定時間（10 秒至 60 分鐘）；時間到自動結束；剩餘時間以 server 為準 | Default |
 | D16 | 投影看板：搶答中只顯示階段、倒數、各組是否在線，**不顯示任何作答資訊（含送出數量）**；結束後可逐題或全部揭曉，逐題揭曉依題號順序 | Confirmed |
 | D17 | 老師在準備階段設定組數與組名 | Default |
-| D18 | 老師端需輸入密碼，密碼由環境變數 `TEACHER_PASSWORD` 設定；登入狀態存 HttpOnly cookie；同一來源 60 秒內錯 10 次暫時鎖定（429）。本組已於 `add-teacher-console` 實作（見 O5） | Default（本組已實作；SpecKit 詢問的回覆見第 10 節 Q1） |
+| D18 | 老師端需輸入密碼，密碼由環境變數 `TEACHER_PASSWORD` 設定；登入狀態存 HttpOnly cookie；同一來源 60 秒內錯 10 次暫時鎖定（429）。本組已於 `add-teacher-console` 實作（見 O5） | Confirmed |
 | D19 | 已結束後可重設活動回到準備中（需再確認）；組別保留，作答資料清空 | Default |
-| D20 | 組名 1–30 字元且不重複；倒數 10–3600 秒；組數上限本組為 100（SpecKit 為 50，見 O1） | Default（組數待統一） |
+| D20 | 組名 1–30 字元且不重複；倒數 10–3600 秒；組數上限本組為 100（SpecKit 為 50，見 O1） | Confirmed |
 | D21 | 學生只能在準備中換組；重新整理或斷線重連後回到原組別與目前階段 | Default |
 | D22 | 題目敘述若匯入檔有則讀取並顯示於題號旁，沒有也不影響 | Default |
 | D23 | 答案去除前後空白後 1–200 字元；不判斷對錯 | Default |
@@ -172,9 +172,9 @@
 2. ✅ `add-groups-and-student-entry`
 3. ✅ `add-guided-notes-import`（task 5.3 延後，待 `add-export-guided-notes` 一併處理）
 4. ✅ `add-buzz-in-submission`（已合併並歸檔；後續小修：`submissions.clear()` 不清訂閱者、`createApplication` 的 `now` 轉為 Date 傳給 `createSubmissions`）：**只做 server**——題目讀取（供學生端）、送出、鎖定、server 排序、競態處理、每組私有推送；不含畫面。
-5. 🔶 `add-student-answering-ui`：學生端題號格、作答、草稿、送出、鎖定同步（依 4 的 API；規劃文件已備，待 apply；只動 `public/student/`，不含結果頁）。
+5. ✅ `add-student-answering-ui`：學生端題號格、作答、草稿、送出、鎖定同步（依 4 的 API；規劃文件已備，待 apply；只動 `public/student/`，不含結果頁）。
 5a. ✅ `add-results-computation`：`server/results.js` 的 `computeResults()` 第一版（教師端成員，已合併，待歸檔）。
-6. ⬜ `add-student-results`：結束後結果頁（依賴 5a 的 `computeResults()` 與 server 端點公開結果）。
+6. 🔶 `add-student-results`：結束後結果頁（依賴 5a 的 `computeResults()` 與 server 端點公開結果）。
 7. ✅ `add-teacher-console`（含老師登入 D18 與開始／結束搶答；教師端成員實作，已歸檔，取代原本規劃的 `add-teacher-auth`）。
 8. 教師端與資料進出：`add-teacher-monitoring`（監看與結果，登入已不屬於它）、`add-export-guided-notes`（含 Google Sheets 寫回，O6）。
 9. P1：countdown、csv-export（8 欄）、void-submission、challenge-override。
