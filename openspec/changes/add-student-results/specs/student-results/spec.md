@@ -122,3 +122,22 @@ server SHALL 提供學生結果端點，僅在階段為「已結束」時回傳�
 #### Scenario: Repeated end events do not reload results
 - **WHEN** 已載入結果後又收到階段為已結束的事件
 - **THEN** 頁面不重新讀取，也不重複畫出結果
+
+### Requirement: The student view preserves group submissions across snapshots and reconnects
+搶答期間，學生頁 SHALL 保留同一有效進場組別已由 POST 回應或 SSE 事件確認的本組作答；讀取到的較舊伺服器快照 SHALL NOT 移除這些作答。studentId SSE 連線第一次成功開啟及後續重新連線成功時，學生頁 SHALL 同步階段與本組作答。EventSource CLOSED 後重新確認進場若遇到暫時網路錯誤，學生頁 SHALL 延遲重試；確認進場失效時仍 SHALL 回到選組畫面。
+
+#### Scenario: A stale snapshot does not erase a received submission
+- **WHEN** 伺服器作答快照請求進行期間收到同組 `submission` 事件，且較舊快照之後才回覆
+- **THEN** 學生頁保留該題已送出的作答狀態，不退回「未作答」
+
+#### Scenario: First student-scoped connection synchronizes missed updates
+- **WHEN** 有效進場後 studentId SSE 連線第一次成功觸發 `open`，且連線建立前有同組作答
+- **THEN** 學生頁同步伺服器狀態並顯示該作答
+
+#### Scenario: Reconnect synchronizes updates missed while disconnected
+- **WHEN** studentId SSE 連線重新開啟，且中斷期間有階段或同組作答更新
+- **THEN** 學生頁重新讀取階段與本組作答並呈現最新狀態
+
+#### Scenario: Transient entry-check failure after a closed event stream is retried
+- **WHEN** CLOSED 連線後的進場確認因暫時網路錯誤失敗
+- **THEN** 學生頁保留目前畫面並延遲重試進場確認；確認結果為 `STUDENT_NOT_ENTERED` 時回到選組畫面

@@ -13,12 +13,14 @@
 - [x] 2.1 在 `public/student/logic.js` 與 `public/student/logic.test.js` 新增 `formatAnswers(blanks, answers)`、`buildResultsRows(results)`、`getResultsLoadNextStep(status)`（403 → 回選組、409 → 重新確認階段、其他錯誤 → 顯示錯誤與重試）。驗證：`node --test public/student/logic.test.js`，涵蓋單題、題組有前綴、無人作答、本組未作答、本組成功、摘要計數、每種狀態碼、答案含 HTML 字元時原樣保留（不轉義，由畫面以純文字顯示）。
 - [x] 2.2 修改 `public/student/index.html`：在「已結束」畫面新增結果區塊（摘要、列表容器、載入中與錯誤訊息、重試按鈕），預設 `hidden`；沿用既有樣式，按鈕最小高度 44px。驗證：開學生頁，準備中與搶答中都看不到新區塊（F12 確認存在且為 hidden）。
 - [x] 2.3 修改 `public/student/app.js`：進入已結束（階段事件與重新整理恢復）時讀取結果，依 `buildResultsRows` 渲染摘要與每題一列，一律用 `textContent`；已載入就不重複讀取；失敗時顯示「無法載入結果，請稍後再試」與重試按鈕；依 `getResultsLoadNextStep` 處理 403 與 409。驗證：手動，見 3.2 的 R 步驟。
+- [ ] 2.4 在 `public/student/logic.js` 與 `public/student/logic.test.js` 新增快照合併純函式：以 `questionId` 合併目前本組作答與伺服器快照，保留目前已存在但快照缺少的作答，並以目前作答優先處理相同題目的重複資料。驗證：`node --test public/student/logic.test.js`，涵蓋快照新增項目、舊快照不刪除本機項目、同題重複時保留目前項目及空輸入。
+- [ ] 2.5 修改 `public/student/app.js`：`loadAnsweringData()`、`synchronizeFromServer()`、`refreshSubmissions()` 在相同有效進場組別中使用 task 2.4 的合併函式；請求開始時記錄 `studentId`、`groupId`，回應套用前若進場身分或組別已改變就丟棄過期回應；組別改變或進場失效時清除舊組作答。studentId SSE 第一次 `open` 與重連 `open` 後都同步；CLOSED 後進場確認的暫時網路錯誤以單一 3 秒延遲計時器重試，成功、失效或連線取代時清除計時器。驗證：手動，見 3.2 的 R12、R13。
 
 ## 3. 負載與驗證
 
-- [ ] 3.1 擴充 `server/capacity-check.js`：在既有 5,000 筆提交場景結束後結束活動，讓 100 位學生同時讀取結果，確認全部回 200、每位的 `own` 與其組別的提交一致、回應不含 `rank`，並印出一行 JSON `{ students, totalMs, slowestMs }`。門檻先設為總耗時 5,000 毫秒內，首次量測後依實際結果調整並把理由寫入驗證紀錄。驗證：`npm run check:capacity`（跑兩次）。
-- [ ] 3.2 新增 `docs/verification/add-student-results.md`，比照 `docs/verification/add-student-answering-ui.md` 的格式：環境欄、自動測試（`npm test` 與 `check:capacity` 的數字，留白）、手動步驟（R1 搶答中沒有結果區塊；R2 結束後約 2 秒內出現結果、摘要與每題列正確；R3 兩組各自看到自己的名次且勝者資訊相同；R4 題組答案顯示前綴與順序；R5 重新整理後仍顯示結果；R6 本組未作答與無人作答的題目顯示正確；R7 答案含 `<b>x</b>` 以純文字顯示；R8 暫停 server 後重新整理顯示錯誤與重試，恢復後重試成功；R9 server 重啟後回到選組畫面；R10 F12 搜尋 `rank` 與 `groupId` 沒有出現；R11 老師控制台（需 `add-teacher-monitoring` 已合併）顯示的名次與學生頁一致）、規格對照、觀察、未測項目，結果欄與結論留白。
-- [ ] 3.3 執行 `npm test` 與 `npm run check:capacity`，完成 3.2 的手動驗證後填寫結果。驗證：全部通過；未通過的項目不得勾選此 task。
+- [ ] 3.1 擴充 `server/capacity-check.js`：提交答案改為每組每題唯一，結束活動沿用 `/api/dev/phase/:phase`，確認全部回 200、每位的 `own.answers` 與其組別送出的答案一致、`own.place` 與 server 內部 `rank` 一致、每題勝者與 rank 1 的作答一致且 100 份回應的 `winner` 相同、回應不含 `rank`、`groupId` 與他組答案，並印出一行 JSON `{ students, totalMs, slowestMs }`。門檻先設為總耗時 5,000 毫秒內，首次量測後依實際結果調整並把理由寫入驗證紀錄。驗證：`npm run check:capacity`（跑兩次）。
+- [x] 3.2 新增 `docs/verification/add-student-results.md`，比照 `docs/verification/add-student-answering-ui.md` 的格式：環境欄、自動測試（`npm test` 與 `check:capacity` 的數字，留白）、手動步驟（R1 搶答中沒有結果區塊；R2 結束後約 2 秒內出現結果、摘要與每題列正確；R3 兩組各自看到自己的名次且勝者資訊相同；R4 題組答案顯示前綴與順序；R5 重新整理後仍顯示結果；R6 本組未作答與無人作答的題目顯示正確；R7 答案含 `<b>x</b>` 以純文字顯示；R8 以 DevTools 封鎖 `/api/student/results` 請求後重新整理顯示錯誤與重試，解除封鎖後重試成功；R9 server 重啟後回到選組畫面；R10 F12 Network 中 `GET /api/student/results` 的回應內容搜尋不到 `rank`、`groupId`、`placings`、`settled`、`winnerSource`，且畫面文字沒有他組組名（勝者除外）；R11 老師控制台（需 `add-teacher-monitoring` 已合併）顯示的名次與學生頁一致；R12 快照回覆與即時事件競態及 studentId SSE 首次開啟後同步；R13 CLOSED 後進場確認遇暫時網路錯誤時延遲重試）、規格對照、觀察、未測項目，結果欄與結論留白。
+- [ ] 3.3 完成 tasks 2.4、2.5 後，執行 `npm test` 與 `npm run check:capacity`，完成 3.2 的手動驗證後填寫結果。驗證：全部通過；未通過的項目不得勾選此 task。
 
 ## Workflow follow-up
 

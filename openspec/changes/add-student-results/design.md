@@ -80,6 +80,14 @@
 
 純函式放在 `logic.js`：`formatAnswers(blanks, answers)`（組出顯示文字）、`buildResultsRows(results)`（組出每列要顯示的文字與是否本組成功）、`getResultsLoadNextStep(status)`（把 403、409、網路錯誤對應到動作），以便以 `node --test` 驗證，DOM 只做接線。
 
+### 4.1 搶答資料快照與事件同步
+
+- 搶答期間，`loadAnsweringData()`、`synchronizeFromServer()`、`refreshSubmissions()` 讀回的本組作答快照與目前記憶體中的作答取聯集，不得直接以快照覆蓋。合併以 `questionId` 去重；快照只補入記憶體中尚無的作答，已由本機 POST 或 SSE 事件收到的作答保留。相同題目的事件與 POST 回應仍以既有冪等套用邏輯處理。
+- 每次請求作答快照時記錄當時的 `studentId` 與 `groupId`；回應套用前確認仍是同一個有效進場，若識別碼、組別或有效進場已改變，丟棄該過期回應，不讓舊組資料回填。
+- 聯集只適用於相同的有效進場組別及搶答資料生命週期。組別改變或進場狀態失效時清除舊組作答，避免把舊組資料帶入新組畫面。搶答期間本組有效作答只增加、不因較舊快照而減少。
+- server 不會在 SSE 連線建立時傳送初始作答狀態。因此 studentId EventSource 第一次成功觸發 `open` 時也呼叫 `synchronizeFromServer()`；後續重連成功時同樣同步階段與本組作答，補回事件空檔期間的狀態。
+- EventSource 因 CLOSED 而觸發進場確認時，`STUDENT_NOT_ENTERED` 仍立即回到選組畫面；暫時網路錯誤則保留目前畫面與進場狀態，延遲 3 秒後重試確認。每條目前有效的連線最多保留一個待執行重試計時器；連線被取代、進場確認成功或已判定進場失效時取消計時器。重試期間不建立重複連線，也不刪除草稿。
+
 ### 5. 隱私與一致性
 
 - 結果與老師端使用同一個 `computeResults()`；若老師端與學生端顯示不同名次，就是這個函式之外有人另寫了規則，視為缺陷。
