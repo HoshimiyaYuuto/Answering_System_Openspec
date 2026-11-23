@@ -1,4 +1,4 @@
-import { applySubmission, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, validateAnswers } from './logic.js';
+import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, validateAnswers } from './logic.js';
 import { createDraftStore } from './drafts.js';
 
 const selection = document.querySelector('#selection');
@@ -14,6 +14,12 @@ const questionGrid = document.querySelector('#question-grid');
 const questionPage = document.querySelector('#question-page');
 const retryQuestionsButton = document.querySelector('#retry-questions');
 const ended = document.querySelector('#ended');
+const resultsSection = document.querySelector('#results-section');
+const resultsSummary = document.querySelector('#results-summary');
+const resultsList = document.querySelector('#results-list');
+const resultsLoadingMessage = document.querySelector('#results-loading');
+const resultsErrorMessage = document.querySelector('#results-error');
+const retryResultsButton = document.querySelector('#results-retry');
 
 let draftStorage;
 try {
@@ -54,6 +60,10 @@ let isSubmitting = false;
 let questionInputs = [];
 let questionSubmitButton = null;
 let questionBackButton = null;
+let resultsLoaded = false;
+let resultsLoading = false;
+let resultsRequestId = 0;
+let resultsRequestController = null;
 
 function createStudentId() {
   const bytes = new Uint8Array(18);
@@ -95,6 +105,7 @@ async function requestJson(path, options) {
 
 function showSelection(message = '') {
   answeringRequestId += 1;
+  clearResultsView();
   currentEntry = null;
   ensureEventSource();
   waiting.hidden = true;
@@ -125,6 +136,7 @@ function showEntryResult(response) {
 
 function showPhaseScreen() {
   const screen = getAnsweringScreen(Boolean(currentEntry?.valid), phase);
+  if (screen !== 'ended') clearResultsView();
   selection.hidden = screen !== 'select-group';
   waiting.hidden = screen !== 'waiting';
   answering.hidden = screen !== 'answering';
@@ -140,6 +152,118 @@ function showPhaseScreen() {
     questionGrid.hidden = true;
     answeringView = 'grid';
     activeQuestionId = null;
+    loadStudentResults();
+  }
+}
+
+function clearResultsView() {
+  resultsRequestId += 1;
+  if (resultsRequestController) {
+    resultsRequestController.abort();
+    resultsRequestController = null;
+  }
+  resultsLoaded = false;
+  resultsLoading = false;
+  resultsSection.hidden = true;
+  resultsSummary.textContent = '';
+  resultsSummary.hidden = true;
+  resultsList.replaceChildren();
+  resultsList.hidden = true;
+  resultsLoadingMessage.hidden = true;
+  resultsErrorMessage.textContent = '';
+  resultsErrorMessage.hidden = true;
+  retryResultsButton.hidden = true;
+}
+
+function renderStudentResults(results) {
+  const view = buildResultsRows(results);
+  resultsSummary.textContent = view.summary.text;
+  resultsSummary.hidden = false;
+  resultsList.replaceChildren();
+  for (const row of view.rows) {
+    const item = document.createElement('li');
+    item.textContent = `${row.label}：${row.winnerText}；${row.ownText}`;
+    resultsList.append(item);
+  }
+  resultsList.hidden = false;
+  resultsLoadingMessage.hidden = true;
+  resultsErrorMessage.textContent = '';
+  resultsErrorMessage.hidden = true;
+  retryResultsButton.hidden = true;
+  resultsSection.hidden = false;
+  resultsLoaded = true;
+}
+
+function showResultsError(message) {
+  resultsSection.hidden = false;
+  resultsSummary.hidden = true;
+  resultsList.hidden = true;
+  resultsLoadingMessage.hidden = true;
+  resultsErrorMessage.textContent = message;
+  resultsErrorMessage.hidden = false;
+  retryResultsButton.hidden = false;
+}
+
+async function loadStudentResults() {
+  if (!studentId || !currentEntry?.valid || phase !== '已結束') return;
+  if (resultsLoading || resultsLoaded || !resultsErrorMessage.hidden) return;
+
+  resultsLoading = true;
+  const requestId = ++resultsRequestId;
+  const controller = new AbortController();
+  resultsRequestController = controller;
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  resultsSection.hidden = false;
+  resultsSummary.hidden = true;
+  resultsList.replaceChildren();
+  resultsList.hidden = true;
+  resultsLoadingMessage.hidden = false;
+  resultsErrorMessage.textContent = '';
+  resultsErrorMessage.hidden = true;
+  retryResultsButton.hidden = true;
+
+  try {
+    const response = await fetch(`/api/student/results?studentId=${encodeURIComponent(studentId)}`, {
+      signal: controller.signal,
+    });
+    let body;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    if (!response.ok) {
+      const error = new Error(body?.error?.message || '伺服器發生錯誤。');
+      error.status = response.status;
+      error.code = body?.error?.code;
+      throw error;
+    }
+    if (!Array.isArray(body?.data?.questions)) throw new Error('伺服器回應格式錯誤。');
+    if (isStaleRequest(requestId, resultsRequestId)) return;
+    renderStudentResults({ questions: body.data.questions });
+  } catch (error) {
+    if (isStaleRequest(requestId, resultsRequestId)) return;
+    const next = getResultsLoadNextStep(Number.isInteger(error.status) ? error.status : null);
+    if (next.action === 'restore-entry') {
+      clearResultsView();
+      await restoreEntry();
+      return;
+    }
+    if (next.action === 'refresh-session') {
+      await synchronizeFromServer();
+      if (isStaleRequest(requestId, resultsRequestId)) return;
+      if (phase !== '已結束') {
+        clearResultsView();
+        return;
+      }
+    }
+    if (phase === '已結束') showResultsError(next.message);
+  } finally {
+    clearTimeout(timeout);
+    if (!isStaleRequest(requestId, resultsRequestId)) {
+      resultsLoading = false;
+      resultsRequestController = null;
+    }
   }
 }
 
@@ -652,6 +776,11 @@ setInterval(() => {
 
 refreshButton.addEventListener('click', () => loadGroups());
 retryQuestionsButton.addEventListener('click', () => loadAnsweringData());
+retryResultsButton.addEventListener('click', () => {
+  resultsErrorMessage.hidden = true;
+  retryResultsButton.hidden = true;
+  loadStudentResults();
+});
 changeGroupButton.addEventListener('click', () => {
   if (phase !== '準備中') return;
   changingGroup = true;

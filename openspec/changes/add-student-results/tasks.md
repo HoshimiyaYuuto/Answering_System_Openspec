@@ -12,7 +12,7 @@
 
 - [x] 2.1 在 `public/student/logic.js` 與 `public/student/logic.test.js` 新增 `formatAnswers(blanks, answers)`、`buildResultsRows(results)`、`getResultsLoadNextStep(status)`（403 → 回選組、409 → 重新確認階段、其他錯誤 → 顯示錯誤與重試）。驗證：`node --test public/student/logic.test.js`，涵蓋單題、題組有前綴、無人作答、本組未作答、本組成功、摘要計數、每種狀態碼、答案含 HTML 字元時原樣保留（不轉義，由畫面以純文字顯示）。
 - [x] 2.2 修改 `public/student/index.html`：在「已結束」畫面新增結果區塊（摘要、列表容器、載入中與錯誤訊息、重試按鈕），預設 `hidden`；沿用既有樣式，按鈕最小高度 44px。驗證：開學生頁，準備中與搶答中都看不到新區塊（F12 確認存在且為 hidden）。
-- [ ] 2.3 修改 `public/student/app.js`：進入已結束（階段事件與重新整理恢復）時讀取結果，依 `buildResultsRows` 渲染摘要與每題一列，一律用 `textContent`；已載入就不重複讀取；失敗時顯示「無法載入結果，請稍後再試」與重試按鈕；依 `getResultsLoadNextStep` 處理 403 與 409。驗證：手動，見 3.2 的 R 步驟。
+- [x] 2.3 修改 `public/student/app.js`：進入已結束（階段事件與重新整理恢復）時讀取結果，依 `buildResultsRows` 渲染摘要與每題一列，一律用 `textContent`；已載入就不重複讀取；失敗時顯示「無法載入結果，請稍後再試」與重試按鈕；依 `getResultsLoadNextStep` 處理 403 與 409。驗證：手動，見 3.2 的 R 步驟。
 
 ## 3. 負載與驗證
 
