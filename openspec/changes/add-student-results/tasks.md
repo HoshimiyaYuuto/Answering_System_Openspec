@@ -4,8 +4,8 @@
 
 ## 1. 契約與 server
 
-- [ ] 1.1 更新 `docs/api-contract.md`：只在檔案末尾新增「學生結果」章節（`GET /api/student/results`、檢查順序、回應白名單範例、`409 RESULTS_NOT_AVAILABLE`、不含組別識別碼與任何 `rank`），並在既有「待補的作答紀錄格式」一節中把「學生端結果」從待補敘述改成已定義；其他既有段落逐字不動。驗證：逐項對照 design 第 1、2 節，確認無遺漏。
-- [ ] 1.2 新增 `server/student-results.js` 與 `server/student-results.test.js`：純函式 `buildStudentResults({ questions, submissions, groups, groupId })`，依 design 第 3 節以 `computeResults()` 組出每題的 `winner`、`own`。驗證：`node --test server/student-results.test.js`，涵蓋：有勝者、自己是勝者、自己未作答、無人作答、題組答案依空格順序、狀態非有效的作答被忽略、組別名稱找不到時的備用文字、回應序列化後不含他組 `groupId`、`rank`、他組答案。
+- [x] 1.1 更新 `docs/api-contract.md`：只在檔案末尾新增「學生結果」章節（`GET /api/student/results`、檢查順序、回應白名單範例、`409 RESULTS_NOT_AVAILABLE`、不含組別識別碼與任何 `rank`），並在既有「待補的作答紀錄格式」一節中把「學生端結果」從待補敘述改成已定義；其他既有段落逐字不動。驗證：逐項對照 design 第 1、2 節，確認無遺漏。
+- [x] 1.2 新增 `server/student-results.js` 與 `server/student-results.test.js`：純函式 `buildStudentResults({ questions, submissions, groups, groupId })`，依 design 第 3 節以 `computeResults()` 組出每題的 `winner`、`own`。驗證：`node --test server/student-results.test.js`，涵蓋：有勝者、自己是勝者、自己未作答、無人作答、題組答案依空格順序、狀態非有效的作答被忽略、組別名稱找不到時的備用文字、回應序列化後不含他組 `groupId`、`rank`、他組答案。
 - [ ] 1.3 在 `server/index.js` 新增 `GET /api/student/results`，沿用學生端點共用的 `studentId` 與有效進場檢查，階段須為已結束（否則 `409 RESULTS_NOT_AVAILABLE`），不快取；新增 `server/student-results-api.test.js`。驗證：`node --test server/student-results-api.test.js`，涵蓋：三種階段、無效 `studentId`、未進場、檢查順序（未進場且非已結束回 `STUDENT_NOT_ENTERED`）、已結束後兩組各自讀到自己的 `own`、勝者資訊兩組相同、回應不含 `rank` 與 `groupId`；手動：`Invoke-RestMethod "http://localhost:3000/api/student/results?studentId=<id>" \| ConvertTo-Json -Depth 6`，搶答中得 409，結束後得結果。
 
 ## 2. 學生頁

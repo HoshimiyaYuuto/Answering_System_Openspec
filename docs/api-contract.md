@@ -472,7 +472,7 @@ Request：
 { "data": { "questionId": 1, "submittedAt": "2026-11-14T00:00:00.000Z" } }
 ```
 
-每組每題最多一筆有效作答。順位只在 server 內保存，不經任何學生端 API 公開。
+每組每題最多一筆有效作答。順位在搶答中只存在 server 內，不經任何學生端 API 公開；活動結束後，學生只能透過「學生結果」章節取得自己組的名次。
 
 ### `GET /api/student/submissions?studentId=...`
 
@@ -530,5 +530,53 @@ Invoke-RestMethod "http://localhost:3000/api/student/submissions?studentId=stu-a
 
 ## 待補的作答紀錄格式
 
-server 內部的作答紀錄與每題判定結果（含作廢、公平順位與老師改選）的格式約定見 [作答紀錄與判定結果](submission-record.md)。結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點；學生端送出已於「搶答送出」章節定義，順位只在 server 內部保存，不經學生端 API 公開。
+server 內部的作答紀錄與每題判定結果（含作廢、公平順位與老師改選）的格式約定見 [作答紀錄與判定結果](submission-record.md)。結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點；學生端送出已於「搶答送出」章節定義，搶答中順位只存在 server 內，不經學生端 API 公開；學生端結果（結束後的名次）已於「學生結果」章節定義。
+
+## 學生結果
+
+`GET /api/student/results?studentId=...` 僅供有效進場的學生讀取，且只在活動「已結束」後提供結果。依序檢查：
+
+1. `studentId` 格式；不符回 `400 INVALID_STUDENT_ID`。
+2. 有效進場；無效回 `403 STUDENT_NOT_ENTERED`。
+3. 階段為「已結束」；否則回 `409 RESULTS_NOT_AVAILABLE`，且不計算、不回傳結果。
+
+成功回 `200`，內容只包含每題的題號、公開題目格式的空格、勝者資訊及本組資訊：
+
+```json
+{
+  "data": {
+    "questions": [
+      {
+        "questionId": 1,
+        "blanks": [{ "index": 0, "prefix": "", "prompt": "第 1 題" }],
+        "winner": { "groupName": "第 2 組", "answers": ["H2O"] },
+        "own": { "place": 2, "isWinner": false, "answers": ["水"] }
+      }
+    ]
+  }
+}
+```
+
+`winner` 為該題最先有效提交的組別名稱與答案；無有效作答時為 `null`。`own` 為學生所屬組別的名次、是否成功與答案；本組沒有有效作答時為 `null`。本組是勝者時，`own.isWinner` 為 `true`。結果不含任何組別識別碼、任何 `rank` 欄位、他組（勝者除外）的名次或答案，也不含 `placings`、`settled`、`winnerSource`、題目層 `prompt` 或儲存格位置。`own.place` 是活動結束後才公開的顯示名次（先到先得時依接收順序），內部的 `rank` 欄位不公開。準備中與搶答中不得讀取結果。
+
+### 學生結果錯誤狀態
+
+以下錯誤沿用通用錯誤 envelope；既有通用「錯誤狀態」表不變。
+
+| HTTP | Code | 用途 |
+| --- | --- | --- |
+| 409 | `RESULTS_NOT_AVAILABLE` | 活動尚未結束時讀取學生結果 |
+
+### PowerShell 範例
+
+以下依序登入老師、開始活動、讓學生進場並提交答案、結束活動，最後讀取學生結果：
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/login -ContentType 'application/json' -Body '{"password":"<老師密碼>"}' -SessionVariable teacher
+Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSession $teacher
+Invoke-RestMethod -Method Put http://localhost:3000/api/student/entry -ContentType 'application/json' -Body '{"studentId":"stu-aaaa1111","groupId":1}'
+Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -ContentType 'application/json' -Body '{"studentId":"stu-aaaa1111","questionId":1,"answers":["H2O"]}'
+Invoke-RestMethod -Method Post http://localhost:3000/api/session/end -WebSession $teacher
+Invoke-RestMethod "http://localhost:3000/api/student/results?studentId=stu-aaaa1111" | ConvertTo-Json -Depth 6
+```
 
