@@ -26,6 +26,7 @@
 {
   "data": {
     "phase": "準備中",
+    "activityId": null,
     "questionCount": 0,
     "groupCount": 0,
     "serverTime": "2026-11-14T00:00:00.000Z"
@@ -35,6 +36,7 @@
 
 `phase` 值為 `準備中`、`搶答中`、`已結束`。
 `groupCount` 為目前實際組別數。
+`activityId` 在首場開始前為 `null`；每次成功開始搶答時由 server 產生新的 UUID，並在該場活動期間（含已結束階段）保持不變。學生端可用它區隔本場草稿；此識別碼不包含組別或作答資訊。重啟 server 後，新的活動會取得新的識別碼。
 
 ## 老師登入
 

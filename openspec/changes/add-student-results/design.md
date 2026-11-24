@@ -88,6 +88,13 @@
 - server 不會在 SSE 連線建立時傳送初始作答狀態。因此 studentId EventSource 第一次成功觸發 `open` 時也呼叫 `synchronizeFromServer()`；後續重連成功時同樣同步階段與本組作答，補回事件空檔期間的狀態。
 - EventSource 因 CLOSED 而觸發進場確認時，`STUDENT_NOT_ENTERED` 仍立即回到選組畫面；暫時網路錯誤則保留目前畫面與進場狀態，延遲 3 秒後重試確認。每條目前有效的連線最多保留一個待執行重試計時器；連線被取代、進場確認成功或已判定進場失效時取消計時器。重試期間不建立重複連線，也不刪除草稿。
 
+### 4.2 草稿依活動隔離
+
+- server 每次成功開始搶答時產生新的 UUID `activityId`，並在該場活動期間保持不變。`GET /api/session` 回傳目前的 `activityId`；首次開始前為 `null`。development 階段路由直接切入「搶答中」時，也依相同規則建立識別碼。
+- 學生端在載入搶答資料及同步 session 時讀取 `activityId`，草稿儲存 key 使用 `activityId`、`studentId` 與 `questionId` 組成。沒有有效 `activityId` 時不讀取或寫入草稿。
+- 同一場活動重新整理後仍使用同一 key，因此草稿可恢復；下一場開始會取得不同 `activityId`，不會載入上一場草稿。舊格式草稿不會被新場次讀取。
+- `activityId` 是不透明場次識別，不帶組別或作答狀態；公開摘要不增加任何作答資訊。
+
 ### 5. 隱私與一致性
 
 - 結果與老師端使用同一個 `computeResults()`；若老師端與學生端顯示不同名次，就是這個函式之外有人另寫了規則，視為缺陷。

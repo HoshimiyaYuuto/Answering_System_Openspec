@@ -28,6 +28,7 @@ try {
   draftStorage = undefined;
 }
 const drafts = createDraftStore(draftStorage);
+drafts.setActivityId(null);
 
 const reconnectBanner = document.createElement('p');
 reconnectBanner.textContent = '重新連線中…';
@@ -51,6 +52,7 @@ let answeringRequestId = 0;
 let synchronizationRequestId = 0;
 let submissionsSnapshotRequestId = 0;
 let currentEntry = null;
+let activityId = null;
 let eventSource = null;
 let eventSourceUrl = null;
 let closedEntryRetryTimer = null;
@@ -570,15 +572,17 @@ async function loadAnsweringData() {
   retryQuestionsButton.hidden = true;
   try {
     const query = `studentId=${encodeURIComponent(requestedStudentId)}`;
-    const [questionsResponse, submissionsResponse] = await Promise.all([
+    const [questionsResponse, submissionsResponse, sessionResponse] = await Promise.all([
       requestJson(`/api/student/questions?${query}`),
       requestJson(`/api/student/submissions?${query}`),
+      requestJson('/api/session'),
     ]);
     if (isStaleRequest(requestId, answeringRequestId)
       || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return;
     const questions = questionsResponse?.data?.questions;
     const submissions = projectSubmissions(submissionsResponse?.data?.submissions);
     if (!Array.isArray(questions)) throw new Error('伺服器回應格式錯誤。');
+    updateActivityId(sessionResponse?.data);
     loadedQuestions = questions;
     if (!isStaleRequest(snapshotRequestId, submissionsSnapshotRequestId)) {
       loadedSubmissions = mergeSubmissions(loadedSubmissions, submissions);
@@ -683,6 +687,7 @@ async function synchronizeFromServer() {
     if (isStaleRequest(requestId, synchronizationRequestId)
       || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return;
     if (currentEntry?.valid) {
+      updateActivityId(session?.data);
       const phaseChanged = phase !== session.data.phase;
       if (phaseChanged && session.data.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
       phase = session.data.phase;
@@ -700,6 +705,19 @@ async function synchronizeFromServer() {
   } catch (error) {
     if (!waiting.hidden) status.textContent = error.message;
   }
+}
+
+function updateActivityId(sessionData) {
+  const nextActivityId = sessionData?.activityId;
+  if (nextActivityId !== null && (typeof nextActivityId !== 'string' || nextActivityId.length === 0)) {
+    throw new Error('伺服器回應格式錯誤。');
+  }
+  if (sessionData?.phase === '搶答中' && nextActivityId === null) {
+    throw new Error('伺服器回應格式錯誤。');
+  }
+  if (activityId !== nextActivityId && activeQuestionId !== null) saveCurrentDraft();
+  activityId = nextActivityId;
+  drafts.setActivityId(activityId);
 }
 
 function handlePhase(event) {

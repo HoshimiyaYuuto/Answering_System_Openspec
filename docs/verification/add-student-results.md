@@ -73,6 +73,7 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -Co
 | R12a | 見上述步驟：A 的 Console 讓 `/api/student/submissions?` 回應延遲 8 秒；開始搶答後，8 秒內 B 提交題 1 | 事件抵達後 A 的題 1 為「已送出」；快照回覆後仍為「已送出」，不退回「未作答」 | 符合預期 |
 | R12b | A 在搶答中封鎖 `*://*/api/events*` 後重新整理；B 提交題 2；解除封鎖 | 10 秒內 A 的題 2 同步為「已送出」 | 符合預期 |
 | R13 | A 已進場；封鎖 `*://*/api/student/entry*`；重啟 server；數秒後解除封鎖 | 封鎖期間有重試且畫面不卡住；解除後回到選組畫面並說明進場失效 | 符合預期 |
+| R14 | 第一場開始後以 `$activity1 = (Invoke-RestMethod http://localhost:3000/api/session).data.activityId` 記錄 ID；題 1 輸入非空草稿並重新整理，確認恢復後仍有草稿。結束活動後再次讀取 session 並確認 ID 仍等於 `$activity1`。重啟 server，以相同瀏覽器與 studentId 重新進場、開始第二場，記錄 `$activity2`，並開啟題 1。 | 同場草稿可恢復且結束後 ID 不變；`$activity2` 與 `$activity1` 不同，第二場題號格顯示「未作答」、輸入框不帶入第一場答案。 | 符合預期 |
 
 ## 5. 老師控制台交叉確認
 
@@ -96,6 +97,7 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -Co
 | The student page shows results after the activity ends | R1、R2、R4、R5、R6、R7 | `public/student/logic.test.js` |
 | The results view handles failures and invalid entries | R8、R9 | `public/student/logic.test.js`、`server/student-results-api.test.js` |
 | The student view preserves group submissions across snapshots and reconnects | R12、R13 | `public/student/logic.test.js`（只驗證合併函式；app.js 接線與重試由手動步驟驗證） |
+| Student drafts are scoped to one activity | R14 | 手動驗證（草稿 store 的活動範圍及跨 server 重啟行為） |
 
 ## 7. 觀察與備註
 

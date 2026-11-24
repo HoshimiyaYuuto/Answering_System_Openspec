@@ -141,3 +141,14 @@ server SHALL 提供學生結果端點，僅在階段為「已結束」時回傳�
 #### Scenario: Transient entry-check failure after a closed event stream is retried
 - **WHEN** CLOSED 連線後的進場確認因暫時網路錯誤失敗
 - **THEN** 學生頁保留目前畫面並延遲重試進場確認；確認結果為 `STUDENT_NOT_ENTERED` 時回到選組畫面
+
+### Requirement: Student drafts are scoped to one activity
+學生端 SHALL 以 server 提供的 `activityId` 隔離草稿。重新整理或重連同一場活動時 SHALL 能恢復本場草稿；新一場活動 SHALL NOT 顯示或回填前一場的草稿。
+
+#### Scenario: A draft is restored within the same activity
+- **WHEN** 學生在同一場搶答輸入部分答案後重新整理並恢復進場
+- **THEN** 該題回填本場草稿
+
+#### Scenario: A previous activity draft is not reused
+- **WHEN** 同一瀏覽器與 `studentId` 進入新一場活動並開啟相同題號
+- **THEN** 題號格不標示前一場的「草稿」，輸入框也不回填前一場答案

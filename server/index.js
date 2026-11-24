@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -80,7 +81,7 @@ export function createApplication({
       : [{ index: 0, prefix: '', prompt: `第 ${id} 題` }];
     return { id, prompt: blanks.map(({ prefix, prompt }) => `${prefix}${prompt}`).join(''), blanks };
   }) : [];
-  const session = { phase: '準備中', questions: developmentQuestions, groups };
+  const session = { phase: '準備中', activityId: null, questions: developmentQuestions, groups };
   const guidedNotes = createGuidedNotesImport();
   const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
   const eventClients = new Set();
@@ -124,6 +125,7 @@ export function createApplication({
   function sessionSummary() {
     return {
       phase: session.phase,
+      activityId: session.activityId,
       questionCount: session.questions.length,
       groupCount: session.groups.count(),
       serverTime: new Date().toISOString(),
@@ -416,6 +418,7 @@ export function createApplication({
     if (session.questions.length === 0) {
       return response.status(409).json({ error: { code: 'QUESTIONS_REQUIRED', message: '請先匯入學習單。' } });
     }
+    session.activityId = randomUUID();
     session.phase = '搶答中';
     publishPhase();
     response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
@@ -439,6 +442,9 @@ export function createApplication({
         return response.status(400).json({
           error: { code: 'INVALID_PHASE', message: '指定的活動階段無效。' },
         });
+      }
+      if (request.params.phase === '搶答中' && session.phase !== '搶答中') {
+        session.activityId = randomUUID();
       }
       session.phase = request.params.phase;
       publishPhase();

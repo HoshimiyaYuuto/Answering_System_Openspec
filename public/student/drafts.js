@@ -1,9 +1,19 @@
 export function createDraftStore(storage) {
   const memory = new Map();
   let activeStorage = storage;
+  let activityId = null;
+  let activityScopeInitialized = false;
 
   function keyFor(studentId, questionId) {
-    return `draft:${studentId}:${questionId}`;
+    if (activityScopeInitialized && (typeof activityId !== 'string' || activityId.length === 0)) return null;
+    return activityScopeInitialized
+      ? `draft:${activityId}:${studentId}:${questionId}`
+      : `draft:${studentId}:${questionId}`;
+  }
+
+  function setActivityId(value) {
+    activityScopeInitialized = true;
+    activityId = typeof value === 'string' && value.length > 0 ? value : null;
   }
 
   function disableStorage() {
@@ -16,6 +26,7 @@ export function createDraftStore(storage) {
 
   function get(studentId, questionId, blanksCount) {
     const key = keyFor(studentId, questionId);
+    if (!key) return null;
     let value = memory.get(key) ?? null;
     if (activeStorage) {
       try {
@@ -39,6 +50,7 @@ export function createDraftStore(storage) {
 
   function set(studentId, questionId, values) {
     const key = keyFor(studentId, questionId);
+    if (!key) return;
     const draft = Array.isArray(values) ? values.slice() : [];
     if (!hasNonBlankValue(draft)) {
       remove(studentId, questionId);
@@ -56,6 +68,7 @@ export function createDraftStore(storage) {
 
   function remove(studentId, questionId) {
     const key = keyFor(studentId, questionId);
+    if (!key) return;
     memory.delete(key);
     if (activeStorage) {
       try {
@@ -70,5 +83,5 @@ export function createDraftStore(storage) {
     return get(studentId, questionId, blanksCount) !== null;
   }
 
-  return { get, set, remove, has };
+  return { get, set, remove, has, setActivityId };
 }
