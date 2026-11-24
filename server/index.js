@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -12,6 +13,7 @@ import {
 } from './guided-notes-import.js';
 import { createTeacherAuth, TeacherAuthError } from './teacher-auth.js';
 import { createSubmissions } from './submissions.js';
+import { buildStudentResults } from './student-results.js';
 import { computeResults } from './results.js';
 import {
   buildAnswerWorkbook,
@@ -102,7 +104,7 @@ export function createApplication({
       : [{ index: 0, prefix: '', prompt: `第 ${id} 題` }];
     return { id, prompt: blanks.map(({ prefix, prompt }) => `${prefix}${prompt}`).join(''), blanks };
   }) : [];
-  const session = { phase: '準備中', questions: developmentQuestions, groups };
+  const session = { phase: '準備中', activityId: null, questions: developmentQuestions, groups };
   const guidedNotes = createGuidedNotesImport();
   const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
   const eventClients = new Set();
@@ -146,6 +148,7 @@ export function createApplication({
   function sessionSummary() {
     return {
       phase: session.phase,
+      activityId: session.activityId,
       questionCount: session.questions.length,
       groupCount: session.groups.count(),
       serverTime: new Date().toISOString(),
@@ -286,6 +289,21 @@ export function createApplication({
     if (!entry) return;
     const ownSubmissions = submissions.listByGroup(entry.group.id).map(({ questionId, answers, submittedAt }) => ({ questionId, answers, submittedAt }));
     return response.json({ data: { submissions: ownSubmissions } });
+  });
+
+  app.get('/api/student/results', (request, response) => {
+    const entry = lookupStudentEntry(request.query.studentId, response);
+    if (!entry) return;
+    if (session.phase !== '已結束') {
+      return response.status(409).json({ error: { code: 'RESULTS_NOT_AVAILABLE', message: '活動結束後才能讀取結果。' } });
+    }
+    const results = buildStudentResults({
+      questions: session.questions,
+      submissions: submissions.listSubmissions(),
+      groups: session.groups.list(),
+      groupId: entry.group.id,
+    });
+    return response.json({ data: results });
   });
 
   // ---- Guided Notes 匯出（design 第 3、5、7 節） ----
@@ -536,6 +554,7 @@ export function createApplication({
     if (session.questions.length === 0) {
       return response.status(409).json({ error: { code: 'QUESTIONS_REQUIRED', message: '請先匯入學習單。' } });
     }
+    session.activityId = randomUUID();
     session.phase = '搶答中';
     publishPhase();
     response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
@@ -559,6 +578,9 @@ export function createApplication({
         return response.status(400).json({
           error: { code: 'INVALID_PHASE', message: '指定的活動階段無效。' },
         });
+      }
+      if (request.params.phase === '搶答中' && session.phase !== '搶答中') {
+        session.activityId = randomUUID();
       }
       session.phase = request.params.phase;
       publishPhase();

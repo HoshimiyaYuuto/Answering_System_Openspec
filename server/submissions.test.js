@@ -25,6 +25,13 @@ test('accepts 200 trimmed characters and rejects 201 characters', () => {
   assert.deepEqual(submit(store, 2, 1, ['x'.repeat(201)]), { ok: false, code: 'INVALID_ANSWER' });
 });
 
+test('counts answer length in Unicode code points, matching the student page', () => {
+  const store = makeStore();
+  // 200 個 emoji 是 400 個 UTF-16 單位，但只算 200 字
+  assert.equal(submit(store, 1, 1, ['😀'.repeat(200)]).ok, true);
+  assert.deepEqual(submit(store, 2, 1, ['😀'.repeat(201)]), { ok: false, code: 'INVALID_ANSWER' });
+});
+
 test('stores trimmed answers and server ISO UTC timestamps', () => {
   const store = makeStore();
   const result = submit(store, 1, 1, ['  answer  ']);

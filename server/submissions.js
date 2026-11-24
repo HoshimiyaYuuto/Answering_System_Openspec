@@ -20,7 +20,9 @@ export function createSubmissions({ now = () => new Date() } = {}) {
     for (const answer of answers) {
       if (typeof answer !== 'string') return { ok: false, code: 'INVALID_ANSWER' };
       const trimmed = answer.trim();
-      if (trimmed.length < MIN_ANSWER_LENGTH || trimmed.length > MAX_ANSWER_LENGTH) {
+      // 以 Unicode 字元（code point）計算，與學生頁的 Array.from 一致，emoji 等補充平面字元算 1 字
+      const length = Array.from(trimmed).length;
+      if (length < MIN_ANSWER_LENGTH || length > MAX_ANSWER_LENGTH) {
         return { ok: false, code: 'INVALID_ANSWER' };
       }
       normalizedAnswers.push(trimmed);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applySubmission, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, validateAnswers } from './logic.js';
+import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers } from './logic.js';
 
 test('connection is considered stale only after forty seconds without an event', () => {
   assert.equal(isReconnecting(10_000, 50_000), false);
@@ -81,6 +81,29 @@ test('submission updates are idempotent and do not mutate their inputs', () => {
   assert.deepEqual(applySubmission([], { questionId: 2, answers: ['two'] }), [{ questionId: 2, answers: ['two'] }]);
 });
 
+test('submission snapshots merge as a union and keep current submissions on duplicate questions', () => {
+  const current = [
+    { questionId: 1, answers: ['event answer'], submittedAt: 'event time' },
+    { questionId: 3, answers: ['local answer'], submittedAt: 'local time' },
+  ];
+  const snapshot = [
+    { questionId: 1, answers: ['stale answer'], submittedAt: 'stale time' },
+    { questionId: 2, answers: ['snapshot answer'], submittedAt: 'snapshot time' },
+  ];
+
+  const merged = mergeSubmissions(current, snapshot);
+  assert.deepEqual(merged, [
+    { questionId: 1, answers: ['event answer'], submittedAt: 'event time' },
+    { questionId: 2, answers: ['snapshot answer'], submittedAt: 'snapshot time' },
+    { questionId: 3, answers: ['local answer'], submittedAt: 'local time' },
+  ]);
+  assert.deepEqual(current[0].answers, ['event answer']);
+  assert.deepEqual(snapshot[0].answers, ['stale answer']);
+  assert.deepEqual(mergeSubmissions([], snapshot), snapshot);
+  assert.deepEqual(mergeSubmissions(current, []), current);
+  assert.deepEqual(mergeSubmissions(null, null), []);
+});
+
 test('submission errors map to the documented next steps', () => {
   assert.equal(getSubmitErrorNextStep({ code: 'ALREADY_SUBMITTED' }).action, 'refresh-submissions');
   assert.equal(getSubmitErrorNextStep({ code: 'SUBMISSION_NOT_ALLOWED' }).action, 'refresh-session');
@@ -93,4 +116,87 @@ test('submission errors map to the documented next steps', () => {
 test('event errors distinguish closed and connecting states without browser globals', () => {
   assert.deepEqual(getEventErrorNextStep(2), { action: 'restore-entry' });
   assert.deepEqual(getEventErrorNextStep(0), { action: 'wait' });
+});
+
+test('formats single answers and grouped answers in blank index order', () => {
+  assert.equal(formatAnswers([{ index: 0, prefix: '', prompt: '化學式' }], ['H2O']), 'H2O');
+  assert.equal(formatAnswers([
+    { index: 1, prefix: '（2）', prompt: '第二空' },
+    { index: 0, prefix: '（1）', prompt: '第一空' },
+  ], ['巴黎', '倫敦']), '（1）巴黎；（2）倫敦');
+});
+
+test('formats missing answers as empty strings without throwing', () => {
+  assert.equal(formatAnswers([
+    { index: 0, prefix: '（1）', prompt: '第一空' },
+    { index: 1, prefix: '（2）', prompt: '第二空' },
+  ], ['巴黎']), '（1）巴黎；（2）');
+});
+
+test('builds result rows, own win summary, and sorted question labels', () => {
+  const result = buildResultsRows({ questions: [
+    {
+      questionId: 2,
+      blanks: [{ index: 0, prefix: '', prompt: '題目二' }],
+      winner: { groupName: '第 2 組', answers: ['答案二'] },
+      own: { place: 2, isWinner: false, answers: ['本組答案二'] },
+    },
+    {
+      questionId: 1,
+      blanks: [{ index: 0, prefix: '', prompt: '題目一' }],
+      winner: { groupName: '第 1 組', answers: ['答案一'] },
+      own: { place: 1, isWinner: true, answers: ['本組答案一'] },
+    },
+    { questionId: 3, blanks: [], winner: null, own: null },
+    {
+      questionId: 4,
+      blanks: [{ index: 0, prefix: '', prompt: '題目四' }],
+      winner: { groupName: '第 2 組', answers: ['答案四'] },
+      own: null,
+    },
+  ] });
+
+  assert.deepEqual(result.summary, { ownWins: 1, total: 4, text: '本組成功 1 題／共 4 題' });
+  assert.deepEqual(result.rows.map(({ questionId, label }) => [questionId, label]), [
+    [1, '第 1 題'], [2, '第 2 題'], [3, '第 3 題'], [4, '第 4 題'],
+  ]);
+  assert.equal(result.rows[0].winnerText, '第 1 組：答案一');
+  assert.equal(result.rows[0].ownText, '本組第 1 名（成功）：本組答案一');
+  assert.equal(result.rows[0].isOwnWinner, true);
+  assert.equal(result.rows[1].winnerText, '第 2 組：答案二');
+  assert.equal(result.rows[1].ownText, '本組第 2 名：本組答案二');
+  assert.equal(result.rows[1].isOwnWinner, false);
+  assert.equal(result.rows[2].winnerText, '無人作答');
+  assert.equal(result.rows[2].ownText, '本組未作答');
+  assert.equal(result.rows[3].winnerText, '第 2 組：答案四');
+  assert.equal(result.rows[3].ownText, '本組未作答');
+});
+
+test('buildResultsRows returns an empty summary for null or empty input', () => {
+  const empty = { summary: { ownWins: 0, total: 0, text: '本組成功 0 題／共 0 題' }, rows: [] };
+  assert.deepEqual(buildResultsRows(null), empty);
+  assert.deepEqual(buildResultsRows({}), empty);
+  assert.deepEqual(buildResultsRows({ questions: [] }), empty);
+});
+
+test('results load errors map status codes to the documented actions', () => {
+  const message = '無法載入結果，請稍後再試';
+  assert.deepEqual(getResultsLoadNextStep(403), { action: 'restore-entry', message });
+  assert.deepEqual(getResultsLoadNextStep(409), { action: 'refresh-session', message });
+  for (const status of [null, undefined, 400, 404, 500]) {
+    assert.deepEqual(getResultsLoadNextStep(status), { action: 'show-message', message });
+  }
+});
+
+test('result answer formatting preserves HTML characters as plain text content', () => {
+  const answer = '<b>x</b>';
+  assert.equal(formatAnswers([{ index: 0, prefix: '', prompt: '題目' }], [answer]), answer);
+  const result = buildResultsRows({ questions: [{
+    questionId: 1,
+    blanks: [{ index: 0, prefix: '', prompt: '題目' }],
+    winner: { groupName: '第 1 組', answers: [answer] },
+    own: { place: 1, isWinner: true, answers: [answer] },
+  }] });
+  assert.equal(result.rows[0].winnerText, `第 1 組：${answer}`);
+  assert.equal(result.rows[0].ownText, `本組第 1 名（成功）：${answer}`);
 });

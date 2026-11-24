@@ -89,16 +89,20 @@ try {
   for (const question of questions) assert.ok(Array.isArray(question.blanks), `question ${question.id} has no blanks array`);
 
   const expectedRanks = Array.from({ length: 100 }, (_, index) => index + 1);
+  const submittedAnswers = new Map();
   const totalStartedAt = Date.now();
   let slowestQuestionMs = 0;
   let submissionCount = 0;
   for (const question of questions) {
-    const answers = Array.from({ length: question.blanks.length }, (_, index) => `answer-${question.id}-${index + 1}`);
     const questionStartedAt = Date.now();
-    const responses = await Promise.all(students.map(({ studentId }) => fetch(`${baseUrl}/api/student/submissions`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ studentId, questionId: question.id, answers }),
-    })));
+    const responses = await Promise.all(students.map(({ studentId, groupId }) => {
+      const answers = Array.from({ length: question.blanks.length }, (_, index) => `answer-${question.id}-${groupId}-${index + 1}`);
+      submittedAnswers.set(`${groupId}:${question.id}`, answers);
+      return fetch(`${baseUrl}/api/student/submissions`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ studentId, questionId: question.id, answers }),
+      });
+    }));
     for (let index = 0; index < responses.length; index += 1) {
       await assertStatus(responses[index], 200, `submission question ${question.id}, group ${index + 1}`);
     }
@@ -125,6 +129,89 @@ try {
   await assertStatus(duplicateResponse, 409, 'duplicate submission');
   const duplicateBody = await duplicateResponse.json();
   assert.equal(duplicateBody.error?.code, 'ALREADY_SUBMITTED', `duplicate submission returned ${JSON.stringify(duplicateBody)}`);
+
+  const endedResponse = await fetch(`${baseUrl}/api/dev/phase/${encodeURIComponent('已結束')}`, { method: 'POST' });
+  await assertStatus(endedResponse, 200, 'set phase to ended');
+
+  const groupsResponse = await fetch(`${baseUrl}/api/groups`);
+  await assertStatus(groupsResponse, 200, 'get groups');
+  const { groups } = (await groupsResponse.json()).data;
+  const groupNames = new Map(groups.map(({ id, name }) => [id, name]));
+
+  {
+    const resultsStartedAt = Date.now();
+    const timedResults = await Promise.all(students.map(async ({ studentId }) => {
+      const response = await fetch(`${baseUrl}/api/student/results?studentId=${encodeURIComponent(studentId)}`);
+      const statusResponse = response.clone();
+      const bodyText = await response.text();
+      // totalMs is the wall-clock duration for all 100 requests through body consumption.
+      // Each request's elapsedMs runs from the common start until its response body is consumed.
+      return { studentId, statusResponse, bodyText, elapsedMs: Date.now() - resultsStartedAt };
+    }));
+    const totalMs = Date.now() - resultsStartedAt;
+    const slowestMs = Math.max(...timedResults.map(({ elapsedMs }) => elapsedMs));
+    const rankOneByQuestion = new Map(questions.map((question) => [
+      question.id,
+      stored.find((row) => row.questionId === question.id && row.rank === 1),
+    ]));
+    const winnersByQuestion = new Map();
+
+    for (const result of timedResults) {
+      const student = students.find(({ studentId }) => studentId === result.studentId);
+      const context = `student ${result.studentId}`;
+      await assertStatus(result.statusResponse, 200, `get results ${context}, questions 1-50`);
+      for (const forbidden of ['"rank"', '"groupId"', '"placings"', '"settled"', '"winnerSource"']) {
+        assert.equal(result.bodyText.includes(forbidden), false, `${context}, questions 1-50: response contains ${forbidden}`);
+      }
+
+      let resultQuestions;
+      try {
+        resultQuestions = JSON.parse(result.bodyText).data.questions;
+      } catch (error) {
+        throw new Error(`${context}, questions 1-50: invalid results JSON: ${error.message}`);
+      }
+      assert.ok(Array.isArray(resultQuestions), `${context}, question 50: questions is not an array`);
+      assert.equal(resultQuestions.length, 50, `${context}, question 50: expected 50 questions, got ${resultQuestions.length}`);
+
+      for (let questionIndex = 0; questionIndex < questions.length; questionIndex += 1) {
+        const question = questions[questionIndex];
+        const resultQuestion = resultQuestions[questionIndex];
+        const questionContext = `${context}, question ${question.id}`;
+        assert.equal(resultQuestion.questionId, question.id, `${questionContext}: question id/order differs`);
+        assert.deepEqual(resultQuestion.blanks, question.blanks, `${questionContext}: blanks differ`);
+
+        const ownAnswers = submittedAnswers.get(`${student.groupId}:${question.id}`);
+        const ownSubmission = stored.find((row) => row.groupId === student.groupId && row.questionId === question.id);
+        const winningSubmission = rankOneByQuestion.get(question.id);
+        assert.ok(ownSubmission, `${questionContext}: stored own submission missing`);
+        assert.ok(winningSubmission, `${questionContext}: rank 1 submission missing`);
+        assert.ok(resultQuestion.own !== null, `${questionContext}: own result is null`);
+        assert.deepEqual(resultQuestion.own.answers, ownAnswers, `${questionContext}: own answers differ`);
+        assert.equal(resultQuestion.own.place, ownSubmission.rank, `${questionContext}: own place differs from stored rank`);
+        assert.equal(resultQuestion.own.isWinner, ownSubmission.rank === 1, `${questionContext}: own isWinner mismatch`);
+
+        assert.ok(resultQuestion.winner !== null, `${questionContext}: winner is null`);
+        assert.deepEqual(resultQuestion.winner.answers, winningSubmission.answers, `${questionContext}: winner answers differ`);
+        assert.equal(resultQuestion.winner.groupName, groupNames.get(winningSubmission.groupId), `${questionContext}: winner group name differs`);
+
+        const winnerJson = JSON.stringify(resultQuestion.winner);
+        if (winnersByQuestion.has(question.id)) {
+          assert.equal(winnerJson, winnersByQuestion.get(question.id), `${questionContext}: winner differs between students`);
+        } else {
+          winnersByQuestion.set(question.id, winnerJson);
+        }
+
+        const allowedAnswers = new Set([...ownAnswers, ...winningSubmission.answers]);
+        for (const match of result.bodyText.matchAll(/answer-(\d+)-\d+-\d+/g)) {
+          if (Number(match[1]) !== question.id) continue;
+          assert.ok(allowedAnswers.has(match[0]), `${questionContext}: response exposes another group's answer ${match[0]}`);
+        }
+      }
+    }
+
+    console.log(JSON.stringify({ students: 100, totalMs, slowestMs }));
+    assert.ok(totalMs <= 5_000, `100 student result requests must complete within 5,000ms; actual totalMs=${totalMs}, slowestMs=${slowestMs}`);
+  }
 
   console.log(JSON.stringify({ submissions: submissionCount, totalMs, slowestQuestionMs }));
   assert.ok(totalMs <= 10_000, `5,000 submissions must complete within 10,000ms; actual totalMs=${totalMs}, slowestQuestionMs=${slowestQuestionMs}`);
