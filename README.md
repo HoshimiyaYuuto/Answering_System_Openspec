@@ -64,6 +64,7 @@ HOST=0.0.0.0 PORT=3000 npm start
 | `HOST` | HTTP server 綁定位址 | `0.0.0.0` |
 | `PORT` | HTTP server 連接埠 | `3000` |
 | `TEACHER_PASSWORD` | 老師登入密碼；未設定或為空時老師無法登入 | 未設定 |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` | Google 服務帳號 JSON 金鑰檔的路徑（檔案放 repository 外），用於寫回 Google 試算表；未設定時只能下載 xlsx | 未設定 |
 | `NODE_ENV` | 只有精確設為 `development` 才載入開發種子與開發階段路由 | 未設定 |
 
 `NODE_ENV` 設為 `development` 以外的任何值，或未設定，都是一般模式：不載入種子資料，也不掛載開發路由。一般驗收與正式使用請保持未設定。
@@ -113,6 +114,46 @@ Invoke-RestMethod -Method Post 'http://localhost:3000/api/dev/phase/%E6%BA%96%E5
 測試用學習單在 `fixtures/guided-notes/`，預期結果記錄在 `expected.json`。
 
 API 細節見 [API 契約](docs/api-contract.md) 的「Guided Notes 匯入」一節。
+
+## 匯出結果與寫回 Google 試算表
+
+活動「已結束」後，教師控制台的「匯出結果」區塊可以把每題搶答成功組別的答案放回 Guided Notes：
+
+- **寫回 Google 試算表**：只適用於以 Google 試算表連結匯入的學習單，答案直接寫進原線上試算表，只改答案儲存格的值，不動格式與其他內容。
+- **下載 xlsx**：任何匯入方式都可用，也是寫回失敗時的備援。檔案以匯入時的內容為底，由 exceljs 重新產生，條件式格式、圖片等少數格式可能遺失。
+
+寫回前 server 會重新讀取線上試算表，依「題號／題目／作答」表頭重新找到每題的位置，所以老師在匯入後插入或刪除列也能寫到正確題目；但題號被改掉或空格數不同時會拒絕寫入並說明原因。第二次寫回不會清除「這次無人作答、上一次留下的答案」。
+
+### 設定服務帳號（只需做一次）
+
+寫回使用 Google Cloud 服務帳號，不需要老師登入 Google。
+
+1. 到 [Google Cloud Console](https://console.cloud.google.com/) 建立（或選擇）一個專案。
+2. 在「API 和服務 → 程式庫」搜尋「Google Sheets API」並啟用。
+3. 在「IAM 與管理 → 服務帳號」建立服務帳號（不需要指派角色），進入該帳號的「金鑰」分頁，新增 JSON 金鑰並下載。
+4. 把金鑰檔放在 repository **以外**的位置，例如 `C:\Users\<使用者>\.secrets\answering-sheets.json`。不要放進專案資料夾，也不要貼到聊天、群組或 issue。
+5. 在 `.env` 加上金鑰檔路徑（只寫路徑，不寫金鑰內容）：
+
+   ```
+   GOOGLE_SERVICE_ACCOUNT_KEY_FILE=C:\Users\<使用者>\.secrets\answering-sheets.json
+   ```
+
+6. 重新啟動 server。登入後可確認設定：
+
+   ```powershell
+   Invoke-RestMethod http://localhost:3000/api/teacher/guided-notes/writeback -WebSession $teacher
+   ```
+
+   `configured` 為 `True` 且顯示服務帳號信箱即設定成功。金鑰檔不存在或格式錯誤時 server 仍會啟動，只是寫回停用，終端機會顯示一行「Google 服務帳號金鑰檔無法讀取，寫回功能停用。」。
+
+### 每份試算表要做的事
+
+1. 學習單必須是**原生 Google 試算表**。如果是上傳到雲端硬碟的 `.xlsx`，請先開啟後選「檔案 → 儲存為 Google 試算表」，再使用新檔案的連結。
+2. 「共用」設定為「知道連結者可檢視」（匯入與寫回前重新讀取都需要）。
+3. 把試算表共用給服務帳號信箱（`...@...iam.gserviceaccount.com`），權限設為「編輯者」。控制台的「匯出結果」區塊會顯示要共用的信箱。
+4. 在教師控制台以連結匯入，活動結束後按「寫回 Google 試算表」。
+
+寫回失敗時，區塊會顯示原因與下一步（例如沒有編輯權限時會顯示應共用的信箱），也可以直接改用「下載 xlsx」。錯誤代碼見 [API 契約](docs/api-contract.md) 的「Guided Notes 匯出」一節。
 
 ## 容量驗證
 

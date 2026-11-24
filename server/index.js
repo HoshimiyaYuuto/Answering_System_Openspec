@@ -15,9 +15,30 @@ import { createTeacherAuth, TeacherAuthError } from './teacher-auth.js';
 import { createSubmissions } from './submissions.js';
 import { buildStudentResults } from './student-results.js';
 import { computeResults } from './results.js';
+import {
+  buildAnswerWorkbook,
+  buildCellWrites,
+  GuidedNotesExportError,
+  relocateQuestions,
+  winningAnswers,
+} from './guided-notes-export.js';
+import { createSheetsClient, loadServiceAccount } from './google-sheets.js';
 import { buildMonitor } from './teacher-monitor.js';
+import { buildResultsCsv } from './results-csv.js';
 
 const TEACHER_COOKIE = 'teacher_session';
+const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+// 依 GOOGLE_SERVICE_ACCOUNT_KEY_FILE 建立預設寫回 client；沒有設定或讀不到金鑰時為 null（寫回回 503）
+function createDefaultSheetsClient() {
+  const credentials = loadServiceAccount(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE);
+  return credentials ? createSheetsClient({ credentials }) : null;
+}
+
+function exportFileName(sourceName, extension = 'xlsx') {
+  const base = String(sourceName || 'Guided Notes').replace(/\.xlsx$/i, '');
+  return `${base}（搶答結果）.${extension}`;
+}
 
 function readCookie(request, name) {
   const header = request.get('Cookie');
@@ -59,6 +80,8 @@ export function createApplication({
   exposeTestErrorRoute = false,
   downloadGuidedNotesImpl = downloadGuidedNotes,
   teacherPassword = process.env.TEACHER_PASSWORD,
+  sheetsClient = createDefaultSheetsClient(),
+  logger = console,
   now,
   submissions = createSubmissions(now ? { now: () => new Date(now()) } : {}),
 } = {}) {
@@ -283,6 +306,101 @@ export function createApplication({
     return response.json({ data: results });
   });
 
+  // ---- Guided Notes 匯出（design 第 3、5、7 節） ----
+
+  function sendExportError(response, code, message, status) {
+    return response.status(status).json({ error: { code, message } });
+  }
+
+  function exportGuard(response) {
+    if (session.phase !== '已結束') {
+      sendExportError(response, 'EXPORT_NOT_ALLOWED', '活動結束後才能匯出。', 409);
+      return null;
+    }
+    const source = guidedNotes.exportSource();
+    if (!source) {
+      sendExportError(response, 'NO_GUIDED_NOTES', '尚未匯入學習單，無法匯出。', 409);
+      return null;
+    }
+    return source;
+  }
+
+  function currentWinners() {
+    const all = submissions.listSubmissions();
+    return winningAnswers(computeResults({ questions: session.questions, submissions: all, now: Date.now() }), all);
+  }
+
+  app.get('/api/teacher/guided-notes/export', requireTeacher, async (_request, response) => {
+    const source = exportGuard(response);
+    if (!source) return;
+    const writes = buildCellWrites(source.questions, currentWinners());
+    const buffer = await buildAnswerWorkbook({ fileBuffer: source.fileBuffer, sheetName: source.sheetName, writes });
+    const fileName = exportFileName(guidedNotes.currentSummary()?.source?.name);
+    response.set({
+      'Content-Type': XLSX_TYPE,
+      'Content-Disposition': `attachment; filename="guided-notes-answers.xlsx"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
+    return response.send(buffer);
+  });
+
+  app.get('/api/teacher/guided-notes/writeback', requireTeacher, (_request, response) => {
+    const source = guidedNotes.exportSource();
+    response.json({
+      data: {
+        configured: sheetsClient !== null,
+        serviceAccountEmail: sheetsClient?.serviceAccountEmail ?? null,
+        target: source ? (source.target ? 'link' : 'file') : null,
+      },
+    });
+  });
+
+  let writebackInProgress = false;
+
+  app.post('/api/teacher/guided-notes/writeback', requireTeacher, async (_request, response) => {
+    const source = exportGuard(response);
+    if (!source) return;
+    if (!source.target) {
+      return sendExportError(response, 'GUIDED_NOTES_NOT_LINK', '這份學習單是上傳的 xlsx，沒有線上試算表可寫回，請改用「下載 xlsx」。', 409);
+    }
+    if (!sheetsClient) {
+      return sendExportError(response, 'SHEET_NOT_CONFIGURED', 'server 尚未設定 Google 服務帳號，無法寫回。請依 README 設定，或改用「下載 xlsx」。', 503);
+    }
+    if (writebackInProgress) {
+      return sendExportError(response, 'WRITEBACK_IN_PROGRESS', '寫回正在進行中，請稍候。', 409);
+    }
+    const winners = currentWinners();
+    if (winners.size === 0) return response.json({ data: { writtenCells: 0, remapped: false } });
+
+    writebackInProgress = true;
+    try {
+      // 寫回前重新讀取線上試算表並以同一套規則重新對位（O6）
+      let fresh;
+      try {
+        const download = await downloadGuidedNotesImpl(`https://docs.google.com/spreadsheets/d/${source.target.spreadsheetId}`);
+        fresh = await parseGuidedNotes(download.buffer);
+      } catch (error) {
+        // 讀得到但版面無法辨識 → SHEET_MODIFIED；讀不到（未分享、逾時、過大等）→ SHEET_CHECK_FAILED
+        const layoutErrors = ['IMPORT_NO_HEADER', 'IMPORT_NO_QUESTIONS', 'IMPORT_DUPLICATE_NUMBER'];
+        if (error instanceof GuidedNotesImportError && layoutErrors.includes(error.code)) {
+          throw new GuidedNotesExportError('SHEET_MODIFIED', `線上試算表已無法依「題號／題目／作答」表頭辨識（${error.message}）請重新匯入學習單後再寫回，或改用下載 xlsx。`, 409);
+        }
+        throw new GuidedNotesExportError('SHEET_CHECK_FAILED', '寫回前無法重新讀取線上試算表。請確認仍設為「知道連結者可檢視」，或改用「下載 xlsx」。', 502);
+      }
+      const relocated = relocateQuestions(source, fresh);
+      const writes = buildCellWrites(relocated.questions, winners);
+      const { writtenCells } = await sheetsClient.batchUpdateValues(source.target.spreadsheetId, relocated.sheetName, writes);
+      logger.log(`[${new Date().toISOString()}] Google 試算表寫回成功：寫入 ${writtenCells} 格${relocated.remapped ? '（已重新對位）' : ''}`);
+      return response.json({ data: { writtenCells, remapped: relocated.remapped } });
+    } catch (error) {
+      if (!(error instanceof GuidedNotesExportError)) throw error;
+      // log 只記錯誤代碼，不記答案、試算表內容或 Google 原文
+      logger.log(`[${new Date().toISOString()}] Google 試算表寫回失敗：${error.code}`);
+      return sendExportError(response, error.code, error.message, error.status);
+    } finally {
+      writebackInProgress = false;
+    }
+  });
+
   function guidedNotesPhaseGuard(_request, response, next) {
     if (session.phase !== '準備中') {
       return response.status(409).json({
@@ -297,13 +415,14 @@ export function createApplication({
     return response.status(error.status).json({ error: { code: error.code, message: error.message } });
   }
 
-  async function createImportPreview(response, fileBuffer, source) {
+  async function createImportPreview(response, fileBuffer, source, target = null) {
     try {
       const parsed = await parseGuidedNotes(fileBuffer);
       const preview = guidedNotes.createPreview({
         parsed,
         source,
         fileBuffer,
+        target,
         replacesExisting: session.questions.length > 0,
       });
       return response.json({ data: preview });
@@ -341,7 +460,8 @@ export function createApplication({
     } catch (error) {
       return sendImportError(response, error);
     }
-    return createImportPreview(response, download.buffer, { type: 'link', name: download.name });
+    const target = download.spreadsheetId ? { spreadsheetId: download.spreadsheetId } : null;
+    return createImportPreview(response, download.buffer, { type: 'link', name: download.name }, target);
   });
 
   app.post('/api/teacher/guided-notes/confirm', requireTeacher, guidedNotesPhaseGuard, (request, response) => {
@@ -364,6 +484,22 @@ export function createApplication({
     response.json({
       data: buildMonitor({ phase: session.phase, questions: session.questions, groups: session.groups.list(), submissions: all, results }),
     });
+  });
+
+  // 結果 csv（add-results-csv-export design 第 1 節）：只需已結束，與學習單來源無關
+  app.get('/api/teacher/results/csv', requireTeacher, (_request, response) => {
+    if (session.phase !== '已結束') {
+      return sendExportError(response, 'EXPORT_NOT_ALLOWED', '活動結束後才能匯出。', 409);
+    }
+    const all = submissions.listSubmissions();
+    const results = computeResults({ questions: session.questions, submissions: all, now: Date.now() });
+    const csv = buildResultsCsv({ questions: session.questions, groups: session.groups.list(), submissions: all, results });
+    const fileName = exportFileName(guidedNotes.currentSummary()?.source?.name, 'csv');
+    response.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="results.csv"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
+    return response.send(Buffer.from(csv, 'utf8'));
   });
 
   if (exposeTestErrorRoute) {

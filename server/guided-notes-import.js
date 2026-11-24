@@ -123,13 +123,17 @@ function locateBlank(reader, header, row) {
   const coversWholeArea = anchorRange.left <= header.answerLeft && anchorRange.right >= header.answerRight;
   if (coversWholeArea || !prefix) return { anchorCell, answerCell: anchorCell, prefix, existingContent };
 
+  // 優先取前綴右側第一個空白格；都已有內容時（例如寫回過一次），取前綴合併範圍右側第一個起始格並提出警告，
+  // 不能退回前綴格，否則第二次寫回會蓋掉前綴
+  let firstRightCell = null;
   for (let column = anchorRange.right + 1; column <= header.answerRight; column += 1) {
     const range = reader.rangeAt(row, column);
     if (range.left !== column) continue;
-    if (reader.textAt(row, column) === '') {
-      return { anchorCell, answerCell: reader.masterAddress(row, column), prefix, existingContent };
-    }
+    const cell = reader.masterAddress(row, column);
+    if (reader.textAt(row, column) === '') return { anchorCell, answerCell: cell, prefix, existingContent };
+    firstRightCell ??= cell;
   }
+  if (firstRightCell) return { anchorCell, answerCell: firstRightCell, prefix, existingContent: true };
   return { anchorCell, answerCell: anchorCell, prefix, existingContent };
 }
 
@@ -229,8 +233,9 @@ export function createGuidedNotesImport() {
   let current = null;
 
   return {
-    createPreview({ parsed, source, fileBuffer, replacesExisting }) {
-      pending = { ...parsed, source, fileBuffer, previewId: randomUUID() };
+    // target：連結來源為 { spreadsheetId }，上傳來源為 null。不放進 source，避免 summarize() 把它帶進老師摘要
+    createPreview({ parsed, source, fileBuffer, replacesExisting, target = null }) {
+      pending = { ...parsed, source, fileBuffer, target: target ? { ...target } : null, previewId: randomUUID() };
       return { previewId: pending.previewId, ...summarize(pending), replacesExisting: Boolean(replacesExisting) };
     },
     confirm(previewId) {
@@ -249,6 +254,7 @@ export function createGuidedNotesImport() {
       return {
         fileBuffer: current.fileBuffer,
         sheetName: current.sheetName,
+        target: current.target ? { ...current.target } : null,
         questions: current.questions.map((question) => ({
           id: question.id,
           blanks: question.blanks.map(({ index, prefix, anchorCell, answerCell }) => ({ index, prefix, anchorCell, answerCell })),
@@ -311,5 +317,5 @@ export async function downloadGuidedNotes(link, { fetchImpl = fetch, timeoutMs =
   }
   if (!isZip(buffer)) fail('IMPORT_LINK_UNREACHABLE', unreachable, 502);
   const name = fileNameFromDisposition(response.headers.get('content-disposition')) || `Google 試算表 ${id}`;
-  return { buffer, name };
+  return { buffer, name, spreadsheetId: id };
 }

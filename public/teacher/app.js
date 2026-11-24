@@ -17,6 +17,7 @@ import {
   getSummaryRows,
   reduceImport,
 } from './import-logic.js';
+import { createExportState, fileNameFromDisposition, getExportView, reduceExport } from './export-logic.js';
 import { createMonitorState, getMonitorView, reduceMonitor } from './monitor-logic.js';
 
 class ApiError extends Error {
@@ -124,6 +125,7 @@ async function loadSummary() {
     if (!summaryRequests.isLatest(requestId)) return;
     dispatchConsole({ type: 'summaryLoaded', summary: data });
     dispatchImport({ type: 'phaseChanged', phase: data.phase });
+    dispatchExport({ type: 'phaseChanged', phase: data.phase });
   } catch (error) {
     if (!summaryRequests.isLatest(requestId)) return;
     sessionMessage.textContent = `無法取得活動狀態：${error.message}`;
@@ -140,6 +142,7 @@ function openEvents() {
     if (consoleState.view !== 'console') return;
     loadSummary();
     loadImportStatus();
+    loadExportConfig();
     monitorChanged();
   });
   source.addEventListener('error', () => {
@@ -154,6 +157,7 @@ function openEvents() {
       const { phase } = JSON.parse(event.data);
       dispatchConsole({ type: 'phaseChanged', phase });
       dispatchImport({ type: 'phaseChanged', phase });
+      dispatchExport({ type: 'phaseChanged', phase });
     } catch {
       // 格式錯誤的事件直接略過，下面重新讀取摘要
     }
@@ -168,6 +172,8 @@ function leaveConsole() {
     events = null;
   }
   dispatchMonitor({ type: 'reset' });
+  // 離開控制台（登出或登入失效）時清掉匯出狀態，重新登入後不會殘留上一次的訊息
+  dispatchExport({ type: 'reset' });
 }
 
 function enterConsole() {
@@ -175,6 +181,7 @@ function enterConsole() {
   loadSummary();
   loadGroups();
   loadImportStatus();
+  loadExportConfig();
   monitorChanged();
 }
 
@@ -480,7 +487,9 @@ importConfirmButton.addEventListener('click', async () => {
     importFile.value = '';
     importLink.value = '';
     dispatchImport({ type: 'confirmed', current: data.current });
+    dispatchExport({ type: 'importLoaded', source: data.current?.source?.type ?? null });
     loadSummary();
+    loadExportConfig();
   } catch (error) {
     if (!importRequests.isLatest(requestId)) return;
     dispatchImport({ type: 'confirmFailed', message: error.message });
@@ -491,6 +500,109 @@ importConfirmButton.addEventListener('click', async () => {
 importCancelButton.addEventListener('click', () => {
   importRequests.next();
   dispatchImport({ type: 'cancel' });
+});
+
+// ---- 匯出結果 ----
+
+const exportDescription = document.querySelector('#export-description');
+const exportWritebackButton = document.querySelector('#export-writeback');
+const exportDownloadButton = document.querySelector('#export-download');
+const exportCsvButton = document.querySelector('#export-csv');
+const exportMessage = document.querySelector('#export-message');
+let exportState = createExportState();
+const exportConfigRequests = createRequestSequence();
+
+function renderExport() {
+  const view = getExportView(exportState);
+  exportDescription.textContent = view.description;
+  exportWritebackButton.disabled = !view.canWriteback;
+  exportWritebackButton.textContent = view.writebackLabel;
+  exportDownloadButton.disabled = !view.canDownload;
+  exportDownloadButton.textContent = view.downloadLabel;
+  exportCsvButton.disabled = !view.canDownloadCsv;
+  exportCsvButton.textContent = view.csvLabel;
+  exportMessage.textContent = view.resultText;
+  exportMessage.classList.toggle('ok', view.resultTone === 'ok');
+}
+
+function dispatchExport(event) {
+  exportState = reduceExport(exportState, event);
+  renderExport();
+}
+
+async function loadExportConfig() {
+  const requestId = exportConfigRequests.next();
+  try {
+    const { data } = await requestJson('/api/teacher/guided-notes/writeback');
+    if (!exportConfigRequests.isLatest(requestId)) return;
+    dispatchExport({ type: 'configLoaded', ...data });
+  } catch (error) {
+    if (!exportConfigRequests.isLatest(requestId)) return;
+    handleAuthError(error);
+  }
+}
+
+exportWritebackButton.addEventListener('click', async () => {
+  if (!getExportView(exportState).canWriteback) return;
+  dispatchExport({ type: 'requestWriteback' });
+  try {
+    const { data } = await requestJson('/api/teacher/guided-notes/writeback', { method: 'POST' });
+    dispatchExport({ type: 'writebackDone', ...data });
+  } catch (error) {
+    if (handleAuthError(error)) return;
+    dispatchExport({ type: 'writebackFailed', message: error.message });
+  }
+});
+
+// 用 fetch 取得檔案再觸發下載，失敗時才能讀到 JSON 錯誤訊息（xlsx 與 csv 共用）
+async function downloadFile(url, fallbackName) {
+  let response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw new ApiError('伺服器沒有回應，請稍後再試。');
+  }
+  if (!response.ok) {
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      // 非 JSON 回應視為伺服器錯誤
+    }
+    throw new ApiError(body?.error?.message || '伺服器發生錯誤。', body?.error?.code, response.status);
+  }
+  const blob = await response.blob();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = fileNameFromDisposition(response.headers.get('Content-Disposition'), fallbackName);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 0);
+}
+
+exportDownloadButton.addEventListener('click', async () => {
+  if (!getExportView(exportState).canDownload) return;
+  dispatchExport({ type: 'requestDownload' });
+  try {
+    await downloadFile('/api/teacher/guided-notes/export', 'guided-notes-answers.xlsx');
+    dispatchExport({ type: 'downloadDone' });
+  } catch (error) {
+    if (handleAuthError(error)) return;
+    dispatchExport({ type: 'downloadFailed', message: error.message });
+  }
+});
+
+exportCsvButton.addEventListener('click', async () => {
+  if (!getExportView(exportState).canDownloadCsv) return;
+  dispatchExport({ type: 'requestCsv' });
+  try {
+    await downloadFile('/api/teacher/results/csv', 'results.csv');
+    dispatchExport({ type: 'csvDone' });
+  } catch (error) {
+    if (handleAuthError(error)) return;
+    dispatchExport({ type: 'csvFailed', message: error.message });
+  }
 });
 
 // ---- 作答監看 ----
@@ -560,5 +672,6 @@ async function loadMonitor() {
 
 renderConsole();
 renderImport();
+renderExport();
 renderMonitor();
 loadAuth();
