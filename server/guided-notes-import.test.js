@@ -138,6 +138,39 @@ test('empty, non-xlsx and corrupted contents are rejected as invalid files', asy
   await rejectsWithCode(parseGuidedNotes(corrupted), 'IMPORT_INVALID_FILE');
 });
 
+test('answer cell right of a prefix stays there even when it already has content', async () => {
+  const buffer = await buildWorkbook([
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '題號', '題目', '作答', ''],
+    ['', '', '', '', 1, '第一空', '（1）', '上次的答案'],
+    ['', '', '', '', '', '第二空', '（2）', ''],
+  ], ['E5:E6', 'G4:H4']);
+  const parsed = await parseGuidedNotes(buffer);
+  assert.deepEqual(parsed.questions[0].blanks.map(({ anchorCell, answerCell, prefix }) => [anchorCell, answerCell, prefix]), [
+    ['G5', 'H5', '（1）'],
+    ['G6', 'H6', '（2）'],
+  ]);
+  assert.equal(parsed.warnings.length, 1);
+  assert.match(parsed.warnings[0], /第 1 題第 1 格（H5）已有內容，匯出時會被取代/);
+});
+
+test('linked imports keep the spreadsheet id as a write-back target outside the summary', async () => {
+  const store = createGuidedNotesImport();
+  const fileBuffer = await fixture('02-official-group.xlsx');
+  const parsed = await parseGuidedNotes(fileBuffer);
+  const linked = store.createPreview({ parsed, source: { type: 'link', name: '學習單' }, fileBuffer, target: { spreadsheetId: sheetId } });
+  assert.doesNotMatch(JSON.stringify(linked), new RegExp(sheetId));
+  store.confirm(linked.previewId);
+  assert.deepEqual(store.exportSource().target, { spreadsheetId: sheetId });
+  assert.doesNotMatch(JSON.stringify(store.currentSummary()), new RegExp(sheetId));
+
+  const uploaded = store.createPreview({ parsed, source: { type: 'file', name: '02.xlsx' }, fileBuffer });
+  store.confirm(uploaded.previewId);
+  assert.equal(store.exportSource().target, null);
+});
+
 // 2.4 匯入狀態
 test('confirm applies only the latest preview and exposes public questions without cell data', async () => {
   const store = createGuidedNotesImport();
@@ -212,6 +245,7 @@ test('a shared link downloads the workbook from the fixed export URL', async () 
   const result = await downloadGuidedNotes(`https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=0`, { fetchImpl });
   assert.equal(requestedUrl, `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`);
   assert.equal(result.name, '學習單.xlsx');
+  assert.equal(result.spreadsheetId, sheetId);
   assert.ok(result.buffer.equals(workbook));
 });
 
