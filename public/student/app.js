@@ -477,6 +477,8 @@ async function submitCurrentQuestion() {
     return;
   }
 
+  // 等待回應期間活動可能結束（activeQuestionId 會被清成 null），之後一律用送出當下的題號
+  const questionId = activeQuestionId;
   isSubmitting = true;
   setQuestionControlsDisabled(true);
   if (questionSubmitButton) questionSubmitButton.textContent = '送出中…';
@@ -490,18 +492,18 @@ async function submitCurrentQuestion() {
     const response = await requestJson('/api/student/submissions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId, questionId: activeQuestionId, answers: result.answers }),
+      body: JSON.stringify({ studentId, questionId, answers: result.answers }),
       signal: controller.signal,
     });
     const data = response?.data ?? {};
     loadedSubmissions = applySubmission(loadedSubmissions, {
-      questionId: activeQuestionId,
+      questionId,
       answers: result.answers,
       submittedAt: data.submittedAt,
     });
-    drafts.remove(studentId, activeQuestionId);
+    drafts.remove(studentId, questionId);
     renderQuestionGrid(loadedQuestions, loadedSubmissions);
-    renderQuestionPage(question);
+    if (answeringView === 'question' && activeQuestionId === questionId) renderQuestionPage(question);
   } catch (caught) {
     const error = timedOut
       ? Object.assign(new Error('伺服器沒有回應'), { name: 'AbortError' })
@@ -511,10 +513,12 @@ async function submitCurrentQuestion() {
     if (next.action === 'refresh-submissions') {
       try {
         const submissions = await refreshSubmissions();
-        const matching = submissions.find((item) => item.questionId === activeQuestionId);
+        const matching = submissions.find((item) => item.questionId === questionId);
         if (matching) {
-          drafts.remove(studentId, activeQuestionId);
-          renderQuestionPage(question, { message: '本組已由其他裝置送出' });
+          drafts.remove(studentId, questionId);
+          if (answeringView === 'question' && activeQuestionId === questionId) {
+            renderQuestionPage(question, { message: '本組已由其他裝置送出' });
+          }
         } else {
           messageForCurrentQuestion(error.message);
         }
