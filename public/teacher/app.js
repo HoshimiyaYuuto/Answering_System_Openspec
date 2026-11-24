@@ -17,6 +17,8 @@ import {
   getSummaryRows,
   reduceImport,
 } from './import-logic.js';
+import { createExportState, fileNameFromDisposition, getExportView, reduceExport } from './export-logic.js';
+import { createMonitorState, getMonitorView, reduceMonitor } from './monitor-logic.js';
 
 class ApiError extends Error {
   constructor(message, code, status) {
@@ -103,6 +105,7 @@ function renderConsole() {
 function dispatchConsole(event) {
   consoleState = reduceConsole(consoleState, event);
   renderConsole();
+  if (consoleState.view !== 'console') leaveConsole();
 }
 
 function handleAuthError(error) {
@@ -122,6 +125,7 @@ async function loadSummary() {
     if (!summaryRequests.isLatest(requestId)) return;
     dispatchConsole({ type: 'summaryLoaded', summary: data });
     dispatchImport({ type: 'phaseChanged', phase: data.phase });
+    dispatchExport({ type: 'phaseChanged', phase: data.phase });
   } catch (error) {
     if (!summaryRequests.isLatest(requestId)) return;
     sessionMessage.textContent = `無法取得活動狀態：${error.message}`;
@@ -130,23 +134,46 @@ async function loadSummary() {
 
 function openEvents() {
   if (events) return;
-  events = new EventSource('/api/events');
-  events.addEventListener('open', () => {
+  // 以老師身分連線才會收到監看通知；未登入時 server 回 401，EventSource 會直接關閉
+  const source = new EventSource('/api/events?role=teacher');
+  events = source;
+  source.addEventListener('open', () => {
     // 連上或重新連上（例如 server 重新啟動）時取得權威快照；登入失效會由匯入狀態的 401 帶回登入畫面
     if (consoleState.view !== 'console') return;
     loadSummary();
     loadImportStatus();
+    loadExportConfig();
+    monitorChanged();
   });
+  source.addEventListener('error', () => {
+    if (source.readyState !== EventSource.CLOSED || events !== source) return;
+    // 連線被拒（例如 server 重啟後登入失效）時不會自動重連，重新確認登入狀態
+    events = null;
+    loadAuth();
+  });
+  source.addEventListener('monitor', () => monitorChanged());
   events.addEventListener('phase', (event) => {
     try {
       const { phase } = JSON.parse(event.data);
       dispatchConsole({ type: 'phaseChanged', phase });
       dispatchImport({ type: 'phaseChanged', phase });
+      dispatchExport({ type: 'phaseChanged', phase });
     } catch {
       // 格式錯誤的事件直接略過，下面重新讀取摘要
     }
     loadSummary();
+    monitorChanged();
   });
+}
+
+function leaveConsole() {
+  if (events) {
+    events.close();
+    events = null;
+  }
+  dispatchMonitor({ type: 'reset' });
+  // 離開控制台（登出或登入失效）時清掉匯出狀態，重新登入後不會殘留上一次的訊息
+  dispatchExport({ type: 'reset' });
 }
 
 function enterConsole() {
@@ -154,6 +181,8 @@ function enterConsole() {
   loadSummary();
   loadGroups();
   loadImportStatus();
+  loadExportConfig();
+  monitorChanged();
 }
 
 async function loadAuth() {
@@ -234,6 +263,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || consoleState.view !== 'console') return;
   loadSummary();
   loadImportStatus();
+  monitorChanged();
 });
 
 // ---- 組別設定 ----
@@ -457,7 +487,9 @@ importConfirmButton.addEventListener('click', async () => {
     importFile.value = '';
     importLink.value = '';
     dispatchImport({ type: 'confirmed', current: data.current });
+    dispatchExport({ type: 'importLoaded', source: data.current?.source?.type ?? null });
     loadSummary();
+    loadExportConfig();
   } catch (error) {
     if (!importRequests.isLatest(requestId)) return;
     dispatchImport({ type: 'confirmFailed', message: error.message });
@@ -470,6 +502,176 @@ importCancelButton.addEventListener('click', () => {
   dispatchImport({ type: 'cancel' });
 });
 
+// ---- 匯出結果 ----
+
+const exportDescription = document.querySelector('#export-description');
+const exportWritebackButton = document.querySelector('#export-writeback');
+const exportDownloadButton = document.querySelector('#export-download');
+const exportCsvButton = document.querySelector('#export-csv');
+const exportMessage = document.querySelector('#export-message');
+let exportState = createExportState();
+const exportConfigRequests = createRequestSequence();
+
+function renderExport() {
+  const view = getExportView(exportState);
+  exportDescription.textContent = view.description;
+  exportWritebackButton.disabled = !view.canWriteback;
+  exportWritebackButton.textContent = view.writebackLabel;
+  exportDownloadButton.disabled = !view.canDownload;
+  exportDownloadButton.textContent = view.downloadLabel;
+  exportCsvButton.disabled = !view.canDownloadCsv;
+  exportCsvButton.textContent = view.csvLabel;
+  exportMessage.textContent = view.resultText;
+  exportMessage.classList.toggle('ok', view.resultTone === 'ok');
+}
+
+function dispatchExport(event) {
+  exportState = reduceExport(exportState, event);
+  renderExport();
+}
+
+async function loadExportConfig() {
+  const requestId = exportConfigRequests.next();
+  try {
+    const { data } = await requestJson('/api/teacher/guided-notes/writeback');
+    if (!exportConfigRequests.isLatest(requestId)) return;
+    dispatchExport({ type: 'configLoaded', ...data });
+  } catch (error) {
+    if (!exportConfigRequests.isLatest(requestId)) return;
+    handleAuthError(error);
+  }
+}
+
+exportWritebackButton.addEventListener('click', async () => {
+  if (!getExportView(exportState).canWriteback) return;
+  dispatchExport({ type: 'requestWriteback' });
+  try {
+    const { data } = await requestJson('/api/teacher/guided-notes/writeback', { method: 'POST' });
+    dispatchExport({ type: 'writebackDone', ...data });
+  } catch (error) {
+    if (handleAuthError(error)) return;
+    dispatchExport({ type: 'writebackFailed', message: error.message });
+  }
+});
+
+// 用 fetch 取得檔案再觸發下載，失敗時才能讀到 JSON 錯誤訊息（xlsx 與 csv 共用）
+async function downloadFile(url, fallbackName) {
+  let response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw new ApiError('伺服器沒有回應，請稍後再試。');
+  }
+  if (!response.ok) {
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      // 非 JSON 回應視為伺服器錯誤
+    }
+    throw new ApiError(body?.error?.message || '伺服器發生錯誤。', body?.error?.code, response.status);
+  }
+  const blob = await response.blob();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = fileNameFromDisposition(response.headers.get('Content-Disposition'), fallbackName);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 0);
+}
+
+exportDownloadButton.addEventListener('click', async () => {
+  if (!getExportView(exportState).canDownload) return;
+  dispatchExport({ type: 'requestDownload' });
+  try {
+    await downloadFile('/api/teacher/guided-notes/export', 'guided-notes-answers.xlsx');
+    dispatchExport({ type: 'downloadDone' });
+  } catch (error) {
+    if (handleAuthError(error)) return;
+    dispatchExport({ type: 'downloadFailed', message: error.message });
+  }
+});
+
+exportCsvButton.addEventListener('click', async () => {
+  if (!getExportView(exportState).canDownloadCsv) return;
+  dispatchExport({ type: 'requestCsv' });
+  try {
+    await downloadFile('/api/teacher/results/csv', 'results.csv');
+    dispatchExport({ type: 'csvDone' });
+  } catch (error) {
+    if (handleAuthError(error)) return;
+    dispatchExport({ type: 'csvFailed', message: error.message });
+  }
+});
+
+// ---- 作答監看 ----
+
+const monitorTitle = document.querySelector('#monitor-title');
+const monitorHint = document.querySelector('#monitor-hint');
+const monitorList = document.querySelector('#monitor-list');
+let monitorState = createMonitorState();
+// 記住老師展開的題目，重新整理畫面時保持展開
+const openQuestions = new Set();
+
+function renderMonitor() {
+  const view = getMonitorView(monitorState);
+  monitorTitle.textContent = view.title;
+  monitorHint.textContent = view.hint;
+  monitorHint.hidden = view.hint === '';
+  monitorList.replaceChildren(...view.rows.map((row) => {
+    const details = document.createElement('details');
+    details.open = openQuestions.has(row.id);
+    details.addEventListener('toggle', () => {
+      if (details.open) openQuestions.add(row.id);
+      else openQuestions.delete(row.id);
+    });
+    const summary = document.createElement('summary');
+    const label = document.createElement('strong');
+    label.textContent = row.label;
+    summary.append(label, document.createTextNode(row.summary));
+    const prompt = document.createElement('p');
+    prompt.className = 'prompt';
+    prompt.textContent = row.prompt;
+    const list = document.createElement('ul');
+    list.replaceChildren(...row.details.map((line) => {
+      const item = document.createElement('li');
+      item.textContent = line.text;
+      if (line.voided) item.className = 'voided';
+      return item;
+    }));
+    details.append(summary, prompt, list);
+    return details;
+  }));
+}
+
+function dispatchMonitor(event) {
+  monitorState = reduceMonitor(monitorState, event);
+  renderMonitor();
+  if (monitorState.wantsRequest && consoleState.view === 'console') loadMonitor();
+}
+
+function monitorChanged() {
+  dispatchMonitor({ type: 'changed' });
+}
+
+async function loadMonitor() {
+  dispatchMonitor({ type: 'requestMonitor' });
+  const seq = monitorState.requestSeq;
+  try {
+    const { data } = await requestJson('/api/teacher/monitor');
+    dispatchMonitor({ type: 'monitorLoaded', seq, data });
+  } catch (error) {
+    dispatchMonitor({ type: 'monitorFailed', seq });
+    if (!handleAuthError(error) && seq === monitorState.requestSeq) {
+      monitorHint.hidden = false;
+      monitorHint.textContent = `無法取得作答資料：${error.message}`;
+    }
+  }
+}
+
 renderConsole();
 renderImport();
+renderExport();
+renderMonitor();
 loadAuth();

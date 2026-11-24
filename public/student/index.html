@@ -13,6 +13,9 @@
     h1 { margin: 8px 0 24px; font-size: clamp(1.8rem, 7vw, 2.4rem); }
     .card { padding: 24px; border-radius: 20px; background: white; box-shadow: 0 8px 28px #17203312; }
     .group-list { display: grid; gap: 12px; margin-top: 16px; }
+    .question-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 12px; margin-top: 16px; }
+    .question-grid button { min-height: 44px; padding: 10px 12px; font-size: 1rem; }
+    .answer-input { display: block; width: 100%; min-height: 44px; margin: 8px 0 16px; padding: 10px 12px; border: 1px solid #aab5c8; border-radius: 10px; font: inherit; }
     button { min-height: 56px; width: 100%; padding: 14px 18px; border: 0; border-radius: 14px; color: white; background: #2357d8; font: inherit; font-size: 1.1rem; font-weight: 700; cursor: pointer; touch-action: manipulation; }
     button:disabled { opacity: .6; cursor: wait; }
     .secondary { margin-top: 16px; color: #17366f; background: #e8efff; }
@@ -34,6 +37,16 @@
       <h2 id="waiting-title">等待活動</h2>
       <p>你的組別：<strong id="group-name"></strong></p>
       <p id="phase-text" class="hint" aria-live="polite"></p>
+    </section>
+    <section id="answering" class="card" hidden aria-labelledby="answering-title">
+      <h2 id="answering-title">題目</h2>
+      <p id="answering-message" class="message" role="status" aria-live="polite" hidden></p>
+      <button id="retry-questions" class="secondary" type="button" hidden>重試</button>
+      <div id="question-grid" class="question-grid" aria-label="題號" hidden></div>
+      <div id="question-page" hidden></div>
+    </section>
+    <section id="ended" class="card" hidden aria-labelledby="ended-title">
+      <h2 id="ended-title">活動已結束</h2>
     </section>
   </main>
   <script type="module" src="/student/app.js"></script>

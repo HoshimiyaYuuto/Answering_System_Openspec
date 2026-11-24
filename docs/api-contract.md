@@ -4,7 +4,7 @@
 
 ## 契約狀態與已知限制
 
-- 本文件只記錄已實作的端點；尚未實作的功能（送出、結果、作廢、匯出等）在各自的 change 中新增。
+- 本文件只記錄已實作的端點；尚未實作的功能（結果、作廢、匯出等）在各自的 change 中新增。學生端送出與組別即時事件已於「搶答送出」章節定義。
 - 活動狀態存在 server 記憶體；server 重啟後組別、進場紀錄、已匯入的題目與老師登入狀態全部清空。
 - 老師身分驗證（共同契約 D18）以 `TEACHER_PASSWORD` 密碼登入實作（見「老師登入」），已取代原本的 loopback 限制；loopback 只剩開發路由 `/api/dev/phase/:phase` 使用。新增的老師端點一律使用同一個登入檢查。
 
@@ -529,7 +529,193 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/student/submissions -Co
 Invoke-RestMethod "http://localhost:3000/api/student/submissions?studentId=stu-aaaa1111"
 ```
 
+## Guided Notes 匯出
+
+活動「已結束」後，把每題成功答案寫回 Guided Notes。成功答案為 `computeResults()` 判定的勝者那一筆作答（見 [作答紀錄與判定結果](submission-record.md)），以 `questionId` + `winner.rank` 查回答案；無勝者的題目不寫入。三個端點都需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`；匯出不改變作答、題目或階段。
+
+每格寫入內容：前綴與答案格分離時（例如 G5 為「（1）」、H5 空白）只寫答案到 H5；前綴位於合併填答區時（答案位置等於前綴格）寫「前綴＋答案」；沒有前綴時只寫答案。答案一律以純文字寫入，「=1+1」不會被當成公式。
+
+### `GET /api/teacher/guided-notes/export`
+
+下載以原匯入檔為底、答案寫在匯入時保存的答案位置的 xlsx。上傳與連結兩種來源都可用，也是寫回失敗時的備援。
+
+- 成功：`200`，`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，`Content-Disposition: attachment; filename="guided-notes-answers.xlsx"; filename*=UTF-8''<原檔名去掉 .xlsx>（搶答結果）.xlsx`。
+- 錯誤一律為 JSON envelope，所以前端以 `fetch` 取得後再觸發下載。
+- 下載的 xlsx 由 exceljs 重新產生，條件式格式、圖片等少數格式可能遺失。
+
+### `POST /api/teacher/guided-notes/writeback`
+
+只適用於以 Google 試算表連結匯入。以服務帳號呼叫 Sheets API `values.batchUpdate`（`valueInputOption: RAW`）寫入原線上試算表，只改答案儲存格的值。依序檢查，任一步失敗就不寫入：
+
+1. 老師登入，否則 `401 TEACHER_AUTH_REQUIRED`
+2. 階段為「已結束」，否則 `409 EXPORT_NOT_ALLOWED`
+3. 已匯入學習單，否則 `409 NO_GUIDED_NOTES`
+4. 以連結匯入，否則 `409 GUIDED_NOTES_NOT_LINK`
+5. server 已設定服務帳號，否則 `503 SHEET_NOT_CONFIGURED`
+6. 沒有其他寫回正在進行，否則 `409 WRITEBACK_IN_PROGRESS`
+7. 沒有任何成功答案時直接回 `{ "writtenCells": 0, "remapped": false }`，不連 Google
+8. 以公開連結重新讀取線上試算表，用匯入時同一套表頭與題號規則重新定位（O6）；讀不到回 `502 SHEET_CHECK_FAILED`，題號集合、空格數不同或表頭無法辨識回 `409 SHEET_MODIFIED`
+9. 寫入新位置，前綴沿用匯入時的值
+
+成功：
+
+```json
+{ "data": { "writtenCells": 6, "remapped": true } }
+```
+
+`remapped` 為 `true` 表示線上試算表的版面在匯入後有變動（例如插入一列），答案已依題號重新對位。第二次寫回不會清除本次無人作答、上一次留下的答案。
+
+### `GET /api/teacher/guided-notes/writeback`
+
+查詢寫回設定，任何階段可呼叫：
+
+```json
+{ "data": { "configured": true, "serviceAccountEmail": "writer@project.iam.gserviceaccount.com", "target": "link" } }
+```
+
+`target` 為 `link`（以連結匯入，可寫回）、`file`（上傳，只能下載）或 `null`（尚未匯入）。服務帳號信箱不是機密，老師需要把試算表共用給它；未設定時 `configured` 為 `false`、`serviceAccountEmail` 為 `null`。回應不含試算表 ID。
+
+### 匯出錯誤狀態
+
+所有寫回錯誤的訊息都會提示可改用「下載 xlsx」。回應與 log 不含金鑰、存取權杖、答案、試算表內容或 Google 原始錯誤內容；log 只記錄寫入格數與錯誤代碼。
+
+| HTTP | Code | 用途 |
+| --- | --- | --- |
+| 409 | `EXPORT_NOT_ALLOWED` | 活動尚未結束 |
+| 409 | `NO_GUIDED_NOTES` | 尚未匯入學習單 |
+| 409 | `GUIDED_NOTES_NOT_LINK` | 上傳的 xlsx 沒有線上試算表可寫回 |
+| 503 | `SHEET_NOT_CONFIGURED` | server 未設定服務帳號 |
+| 409 | `WRITEBACK_IN_PROGRESS` | 前一次寫回尚未完成 |
+| 502 | `SHEET_CHECK_FAILED` | 寫回前無法重新讀取線上試算表（例如已取消「知道連結者可檢視」） |
+| 409 | `SHEET_MODIFIED` | 線上試算表的題號或空格數與匯入時不同，訊息指出第一個差異 |
+| 503 | `SHEET_AUTH_FAILED` | 服務帳號認證失敗 |
+| 503 | `SHEET_API_DISABLED` | 服務帳號所屬專案未啟用 Sheets API |
+| 422 | `SHEET_NOT_EDITABLE` | 服務帳號沒有編輯權限，訊息包含應共用的服務帳號信箱 |
+| 422 | `SHEET_NOT_FOUND` | 找不到試算表 |
+| 422 | `SHEET_NOT_NATIVE` | 雲端上的檔案仍是 xlsx，需先「儲存為 Google 試算表」 |
+| 422 | `SHEET_TAB_NOT_FOUND` | 找不到要寫入的工作表 |
+| 502 | `SHEET_UNAVAILABLE` | Google 限流、5xx、網路錯誤或逾時 |
+
+與 SpecKit 組 006 的差異（使用者看到的行為一致）：端點放在 `/api/teacher/guided-notes/` 下、狀態類錯誤用 409、沒有 `force` 參數（題號對不上一律拒絕寫入）。
+
+### PowerShell 範例
+
+先登入並取得 `$teacher`（見「老師登入」），活動結束後：
+
+```powershell
+Invoke-RestMethod http://localhost:3000/api/teacher/guided-notes/writeback -WebSession $teacher
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/guided-notes/writeback -WebSession $teacher
+Invoke-WebRequest http://localhost:3000/api/teacher/guided-notes/export -WebSession $teacher -OutFile answers.xlsx
+```
+
+## 老師監看
+
+### `GET /api/teacher/monitor`
+
+需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`。任何階段都可查詢，查詢不改變任何狀態。名次、勝者與 `settled` 一律取自 server 的 `computeResults()`（見 [作答紀錄與判定結果](submission-record.md)），前端不自行排名。
+
+```json
+{
+  "data": {
+    "phase": "搶答中",
+    "groupCount": 3,
+    "questions": [
+      {
+        "id": 1,
+        "prompt": "水的化學式是",
+        "settled": true,
+        "winner": { "groupId": 1, "groupName": "第 1 組", "answers": ["H2O"] },
+        "winnerSource": "arrival",
+        "submittedCount": 2,
+        "entries": [
+          { "groupId": 1, "groupName": "第 1 組", "rank": 1, "status": "valid", "place": 1, "answers": ["H2O"], "submittedAt": "2026-11-14T00:00:00.000Z" },
+          { "groupId": 2, "groupName": "第 2 組", "rank": 2, "status": "valid", "place": 2, "answers": ["水"], "submittedAt": "2026-11-14T00:00:01.000Z" }
+        ],
+        "notSubmitted": [{ "groupId": 3, "groupName": "第 3 組" }]
+      }
+    ]
+  }
+}
+```
+
+| 欄位 | 說明 |
+| --- | --- |
+| `questions` | 依題號排序，每題都會出現（包含無人作答） |
+| `prompt` | 題目層敘述（只給老師；學生端題目不含此欄） |
+| `settled` | `false` 表示判定中（公平順位啟用後才會出現），此時 `winner` 為 `null` |
+| `winner` | 勝者組別與該筆答案；無有效作答或判定中為 `null` |
+| `winnerSource` | `arrival`／`fair`；`winner` 為 `null` 時為 `null` |
+| `submittedCount` | 該題有效作答數 |
+| `entries` | 該題所有作答（有效與已作廢），依 `rank` 排序；`status` 為 `valid` 或 `voided`，已作廢的 `place` 為 `null` |
+| `notSubmitted` | 該題沒有任何作答的組別，依組別 id 排序 |
+
+組別已不存在時組名顯示為 `組 <id>`。
+
+```powershell
+Invoke-RestMethod http://localhost:3000/api/teacher/monitor -WebSession $teacher | ConvertTo-Json -Depth 6
+```
+
+### `GET /api/events?role=teacher` 的監看通知
+
+老師控制台以 `role=teacher` 連線，瀏覽器會自動帶上老師登入 cookie。未登入回 `401 TEACHER_AUTH_REQUIRED`，不建立 SSE 連線；其他 `role` 值視為一般公開連線。
+
+成功連線除既有的 `phase` 與 `heartbeat` 外，任何一組成功送出後都會收到：
+
+```text
+event: monitor
+data: {"serverTime":"2026-11-14T00:00:00.000Z"}
+
+```
+
+事件只表示「監看資料已改變」，不含作答內容，老師端收到後重新呼叫 `GET /api/teacher/monitor`。每次送出時才檢查登入狀態，老師登出後同一條連線不再收到 `monitor`。學生連線（`studentId`）與未帶參數的公開連線都不會收到 `monitor`。
+
+## 結果 csv 匯出
+
+### `GET /api/teacher/results/csv`
+
+活動「已結束」後下載整場的作答紀錄 csv（D13）。需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`；階段不是「已結束」回 `409 EXPORT_NOT_ALLOWED`（「活動結束後才能匯出。」）。與學習單是上傳或以連結匯入無關，也不需要設定 Google 服務帳號。下載不改變作答、順位、題目或階段。
+
+成功：`200`，`Content-Type: text/csv; charset=utf-8`，`Content-Disposition: attachment; filename="results.csv"; filename*=UTF-8''<原檔名去掉 .xlsx>（搶答結果）.csv`。前端以 `fetch` 取得，失敗時讀 JSON envelope 的錯誤訊息。
+
+內容（格式約定見 [作答紀錄與判定結果](submission-record.md) 第 3 節）：
+
+- 第一列為表頭 `題號,空格序,組別,答案,順位,是否搶答成功,送出時間,公平順位`。
+- 每筆**有效**作答 × 每個空格一列，依題號、順位、空格序排序。已作廢的作答與沒有任何有效作答的題目不產生資料列；整場沒有作答時只有表頭。
+
+| 欄位 | 內容 |
+| --- | --- |
+| 題號 | 學習單上的題號 |
+| 空格序 | 該空格在題內的序號，從 1 起 |
+| 組別 | 組別名稱（不輸出 id）；找不到的組別為 `組 <id>` |
+| 答案 | 該空格的答案 |
+| 順位 | 判定結果的名次（`place`），與 `GET /api/teacher/monitor` 的 `place` 相同 |
+| 是否搶答成功 | 該題勝者那一筆為 `是`，其餘 `否` |
+| 送出時間 | server 收到的時間，以 server 電腦時區的本地時間 `YYYY-MM-DD HH:mm:ss` 輸出，不帶 `Z` 或時區後綴 |
+| 公平順位 | 未啟用公平順位時為 `否`；啟用時為 `是`，勝者因公平順位改判時為 `是（改判）` |
+
+檔案格式：
+
+- UTF-8 含 BOM，每列（含最後一列）以 CRLF 結尾。
+- 欄位值以 `=`、`+`、`-`、`@` 開頭時前面加單引號 `'`，避免被試算表當成公式（例如 `=1+1` 輸出 `'=1+1`）。
+- 欄位含逗號、雙引號、CR 或 LF 時依 RFC 4180 以雙引號包住，內部雙引號改為兩個；其他欄位不加引號。
+
+範例（第 1 題 2 個空格，第 2 組先送出）：
+
+```text
+題號,空格序,組別,答案,順位,是否搶答成功,送出時間,公平順位
+1,1,第 2 組,丙,1,是,2026-11-24 09:02:03,否
+1,2,第 2 組,'=1+1,1,是,2026-11-24 09:02:03,否
+1,1,第 1 組,甲,2,否,2026-11-24 09:02:05,否
+1,2,第 1 組,"乙,丁",2,否,2026-11-24 09:02:05,否
+```
+
+與 SpecKit 組 004 的差異：端點路徑不同；欄位、編碼與公式防護一致。
+
+```powershell
+Invoke-WebRequest http://localhost:3000/api/teacher/results/csv -WebSession $teacher -OutFile results.csv
+```
+
 ## 待補的作答紀錄格式
 
-server 內部的作答紀錄與每題判定結果（含作廢、公平順位與老師改選）的格式約定見 [作答紀錄與判定結果](submission-record.md)。送出、結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點。
+server 內部的作答紀錄與每題判定結果（含作廢與公平順位）的格式約定見 [作答紀錄與判定結果](submission-record.md)。結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點；學生端送出已於「搶答送出」章節定義，順位只在 server 內部保存，不經學生端 API 公開。
 

@@ -43,6 +43,14 @@
     .confirm p { margin: 0; color: #7d1c13; font-weight: 700; }
     .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .header button { width: auto; margin-top: 0; min-height: 44px; }
+    .message.ok { color: #1d6b3a; }
+    .monitor-list { display: grid; gap: 8px; margin-top: 12px; }
+    .monitor-list details { border: 1px solid #dde3ee; border-radius: 12px; background: #fbfcfe; }
+    .monitor-list summary { padding: 12px; cursor: pointer; line-height: 1.5; }
+    .monitor-list summary strong { margin-right: 8px; }
+    .monitor-list .prompt { margin: 0 12px 8px; color: #5a6680; }
+    .monitor-list ul { margin: 0; padding: 0 12px 12px 2em; line-height: 1.7; }
+    .monitor-list .voided { color: #8a94a8; text-decoration: line-through; }
   </style>
 </head>
 <body>
@@ -86,6 +94,12 @@
         <p id="session-message" class="message" role="status" aria-live="polite"></p>
       </section>
 
+      <section class="panel" aria-labelledby="monitor-title">
+        <h2 id="monitor-title">作答監看</h2>
+        <p id="monitor-hint" class="status">讀取中…</p>
+        <div id="monitor-list" class="monitor-list" aria-live="polite"></div>
+      </section>
+
     <section class="panel" aria-labelledby="groups-title">
       <h2 id="groups-title">組別設定</h2>
       <p id="groups-blocked" class="warning" role="alert" hidden></p>
@@ -121,6 +135,15 @@
         <button id="import-cancel" type="button" class="secondary">取消</button>
       </div>
       <p id="import-message" class="message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="export-title">
+      <h2 id="export-title">匯出結果</h2>
+      <p id="export-description" class="status">活動結束後才能匯出。</p>
+      <button id="export-writeback" type="button" disabled>寫回 Google 試算表</button>
+      <button id="export-download" type="button" class="secondary" disabled>下載 xlsx</button>
+      <button id="export-csv" type="button" class="secondary" disabled>下載 CSV</button>
+      <p id="export-message" class="message" role="status" aria-live="polite"></p>
     </section>
     </div>
   </main>
