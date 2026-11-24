@@ -643,7 +643,7 @@ Invoke-WebRequest http://localhost:3000/api/teacher/guided-notes/export -WebSess
 | `prompt` | 題目層敘述（只給老師；學生端題目不含此欄） |
 | `settled` | `false` 表示判定中（公平順位啟用後才會出現），此時 `winner` 為 `null` |
 | `winner` | 勝者組別與該筆答案；無有效作答或判定中為 `null` |
-| `winnerSource` | `arrival`／`fair`／`override`；`winner` 為 `null` 時為 `null` |
+| `winnerSource` | `arrival`／`fair`；`winner` 為 `null` 時為 `null` |
 | `submittedCount` | 該題有效作答數 |
 | `entries` | 該題所有作答（有效與已作廢），依 `rank` 排序；`status` 為 `valid` 或 `voided`，已作廢的 `place` 為 `null` |
 | `notSubmitted` | 該題沒有任何作答的組別，依組別 id 排序 |
@@ -668,7 +668,53 @@ data: {"serverTime":"2026-11-14T00:00:00.000Z"}
 
 事件只表示「監看資料已改變」，不含作答內容，老師端收到後重新呼叫 `GET /api/teacher/monitor`。每次送出時才檢查登入狀態，老師登出後同一條連線不再收到 `monitor`。學生連線（`studentId`）與未帶參數的公開連線都不會收到 `monitor`。
 
+## 結果 csv 匯出
+
+### `GET /api/teacher/results/csv`
+
+活動「已結束」後下載整場的作答紀錄 csv（D13）。需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`；階段不是「已結束」回 `409 EXPORT_NOT_ALLOWED`（「活動結束後才能匯出。」）。與學習單是上傳或以連結匯入無關，也不需要設定 Google 服務帳號。下載不改變作答、順位、題目或階段。
+
+成功：`200`，`Content-Type: text/csv; charset=utf-8`，`Content-Disposition: attachment; filename="results.csv"; filename*=UTF-8''<原檔名去掉 .xlsx>（搶答結果）.csv`。前端以 `fetch` 取得，失敗時讀 JSON envelope 的錯誤訊息。
+
+內容（格式約定見 [作答紀錄與判定結果](submission-record.md) 第 3 節）：
+
+- 第一列為表頭 `題號,空格序,組別,答案,順位,是否搶答成功,送出時間,公平順位`。
+- 每筆**有效**作答 × 每個空格一列，依題號、順位、空格序排序。已作廢的作答與沒有任何有效作答的題目不產生資料列；整場沒有作答時只有表頭。
+
+| 欄位 | 內容 |
+| --- | --- |
+| 題號 | 學習單上的題號 |
+| 空格序 | 該空格在題內的序號，從 1 起 |
+| 組別 | 組別名稱（不輸出 id）；找不到的組別為 `組 <id>` |
+| 答案 | 該空格的答案 |
+| 順位 | 判定結果的名次（`place`），與 `GET /api/teacher/monitor` 的 `place` 相同 |
+| 是否搶答成功 | 該題勝者那一筆為 `是`，其餘 `否` |
+| 送出時間 | server 收到的時間，以 server 電腦時區的本地時間 `YYYY-MM-DD HH:mm:ss` 輸出，不帶 `Z` 或時區後綴 |
+| 公平順位 | 未啟用公平順位時為 `否`；啟用時為 `是`，勝者因公平順位改判時為 `是（改判）` |
+
+檔案格式：
+
+- UTF-8 含 BOM，每列（含最後一列）以 CRLF 結尾。
+- 欄位值以 `=`、`+`、`-`、`@` 開頭時前面加單引號 `'`，避免被試算表當成公式（例如 `=1+1` 輸出 `'=1+1`）。
+- 欄位含逗號、雙引號、CR 或 LF 時依 RFC 4180 以雙引號包住，內部雙引號改為兩個；其他欄位不加引號。
+
+範例（第 1 題 2 個空格，第 2 組先送出）：
+
+```text
+題號,空格序,組別,答案,順位,是否搶答成功,送出時間,公平順位
+1,1,第 2 組,丙,1,是,2026-11-24 09:02:03,否
+1,2,第 2 組,'=1+1,1,是,2026-11-24 09:02:03,否
+1,1,第 1 組,甲,2,否,2026-11-24 09:02:05,否
+1,2,第 1 組,"乙,丁",2,否,2026-11-24 09:02:05,否
+```
+
+與 SpecKit 組 004 的差異：端點路徑不同；欄位、編碼與公式防護一致。
+
+```powershell
+Invoke-WebRequest http://localhost:3000/api/teacher/results/csv -WebSession $teacher -OutFile results.csv
+```
+
 ## 待補的作答紀錄格式
 
-server 內部的作答紀錄與每題判定結果（含作廢、公平順位與老師改選）的格式約定見 [作答紀錄與判定結果](submission-record.md)。結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點；學生端送出已於「搶答送出」章節定義，順位只在 server 內部保存，不經學生端 API 公開。
+server 內部的作答紀錄與每題判定結果（含作廢與公平順位）的格式約定見 [作答紀錄與判定結果](submission-record.md)。結果、監看、作廢與匯出的 API 依該格式設計，實作時在此新增各端點；學生端送出已於「搶答送出」章節定義，順位只在 server 內部保存，不經學生端 API 公開。
 

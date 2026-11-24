@@ -22,6 +22,7 @@ import {
 } from './guided-notes-export.js';
 import { createSheetsClient, loadServiceAccount } from './google-sheets.js';
 import { buildMonitor } from './teacher-monitor.js';
+import { buildResultsCsv } from './results-csv.js';
 
 const TEACHER_COOKIE = 'teacher_session';
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -32,9 +33,9 @@ function createDefaultSheetsClient() {
   return credentials ? createSheetsClient({ credentials }) : null;
 }
 
-function exportFileName(sourceName) {
+function exportFileName(sourceName, extension = 'xlsx') {
   const base = String(sourceName || 'Guided Notes').replace(/\.xlsx$/i, '');
-  return `${base}（搶答結果）.xlsx`;
+  return `${base}（搶答結果）.${extension}`;
 }
 
 function readCookie(request, name) {
@@ -465,6 +466,22 @@ export function createApplication({
     response.json({
       data: buildMonitor({ phase: session.phase, questions: session.questions, groups: session.groups.list(), submissions: all, results }),
     });
+  });
+
+  // 結果 csv（add-results-csv-export design 第 1 節）：只需已結束，與學習單來源無關
+  app.get('/api/teacher/results/csv', requireTeacher, (_request, response) => {
+    if (session.phase !== '已結束') {
+      return sendExportError(response, 'EXPORT_NOT_ALLOWED', '活動結束後才能匯出。', 409);
+    }
+    const all = submissions.listSubmissions();
+    const results = computeResults({ questions: session.questions, submissions: all, now: Date.now() });
+    const csv = buildResultsCsv({ questions: session.questions, groups: session.groups.list(), submissions: all, results });
+    const fileName = exportFileName(guidedNotes.currentSummary()?.source?.name, 'csv');
+    response.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="results.csv"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
+    return response.send(Buffer.from(csv, 'utf8'));
   });
 
   if (exposeTestErrorRoute) {
