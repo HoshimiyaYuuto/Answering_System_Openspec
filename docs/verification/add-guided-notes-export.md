@@ -71,6 +71,18 @@ server 以 `NODE_ENV=production`、測試用密碼 `test-password`（環境變�
 
 server log 在這段期間只有以下格式的紀錄，不含答案、試算表 ID 或金鑰：`Google 試算表寫回成功：寫入 4 格`、`寫入 4 格（已重新對位）`、`寫回失敗：SHEET_MODIFIED`、`SHEET_NOT_EDITABLE`、`SHEET_NOT_NATIVE`。
 
+### 5.3 review 後補充（PR #16）
+
+日期 2026/11/24，分支已含 PR #10～#14 的 main（`#15` 只有文件與歸檔）。
+
+| 項目 | 結果 |
+| --- | --- |
+| `npm test` | 通過：`tests 230`、`pass 230`、`fail 0`（含本次新增的 GET 寫回設定未登入測試） |
+| `GET /api/teacher/guided-notes/writeback` 未登入 | `401 TEACHER_AUTH_REQUIRED`；登入後只回 `configured`、`serviceAccountEmail`、`target`，不含金鑰檔路徑（`guided-notes-writeback-api.test.js`） |
+| 老師頁登入（活動已結束、已上傳 `01`、第 1 組送出 1 題） | 監看顯示 6 題，匯出區塊「下載 xlsx」可用；下載後顯示「已下載含答案的 xlsx。」 |
+| 按「登出」 | 回到登入畫面；監看清單清空、匯出區塊回到「活動結束後才能匯出。」且按鈕停用，下載訊息清除 |
+| 重新登入 | 監看重新讀取 6 題、匯出區塊重新讀取設定，按鈕可用，沒有上一次的下載訊息 |
+
 ## 6. 未測項目
 
 - 以學生頁實際送出：待 `add-student-answering-ui` 完成後重跑第 4 節步驟 2～4。

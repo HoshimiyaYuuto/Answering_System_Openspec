@@ -91,6 +91,22 @@ test('writeback checks login, phase, import, link source and configuration in or
   }
 });
 
+test('the writeback config needs login and exposes only the three public fields', async () => {
+  const app = await startApp({ sheetsClient: fakeClient() });
+  try {
+    const anonymous = await fetch(`${app.url}/api/teacher/guided-notes/writeback`);
+    assert.equal(anonymous.status, 401);
+    assert.deepEqual(await anonymous.json(), { error: { code: 'TEACHER_AUTH_REQUIRED', message: '請先以老師密碼登入。' } });
+
+    // 登入後也只有設定狀態、服務帳號信箱與匯入來源，不含金鑰檔路徑或私鑰
+    const config = await (await app.teacher('/api/teacher/guided-notes/writeback')).json();
+    assert.deepEqual(config, { data: { configured: true, serviceAccountEmail: SERVICE_EMAIL, target: null } });
+    assert.doesNotMatch(JSON.stringify(config), /\.json|PRIVATE KEY|GOOGLE_SERVICE_ACCOUNT_KEY_FILE/);
+  } finally {
+    await close(app.server);
+  }
+});
+
 test('an uploaded import cannot be written back', async () => {
   const client = fakeClient();
   const app = await startApp({ sheetsClient: client });
