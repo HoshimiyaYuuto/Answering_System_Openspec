@@ -15,6 +15,7 @@
 - 成功回應使用 `application/json`：`{"data": {...}}`。
 - 錯誤回應使用 `application/json`：`{"error":{"code":"...","message":"..."}}`。錯誤訊息不得包含堆疊、秘密或內部設定。
 - 未知路徑回 `404`，內部錯誤回 `500`；錯誤回應一律遵守上述 envelope。
+- 內部錯誤（`500 INTERNAL_ERROR`）會在 server 終端機（stderr）留下一筆紀錄：時間、HTTP 方法、不含 query string 的路徑與錯誤堆疊，格式為 `[<ISO 時間>] <方法> <路徑> 500 INTERNAL_ERROR`，下一行起為堆疊。紀錄不含 request body、query string、cookie 與其他標頭；堆疊只出現在終端機，不出現在回應。`400`、`404`、`413` 等用戶端錯誤不記錄。
 
 ## 活動摘要
 
