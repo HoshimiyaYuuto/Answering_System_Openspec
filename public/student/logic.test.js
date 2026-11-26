@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers, mergeVoided, reconcileVoided, applyVoid, formatRemaining, RESET_MESSAGE } from './logic.js';
+import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isPhaseSnapshotCurrent, isReconnecting, isStaleRequest, resolveResponsePhase, mergeSubmissions, validateAnswers, mergeVoided, reconcileVoided, applyVoid, formatRemaining, RESET_MESSAGE } from './logic.js';
 
 test('connection is considered stale only after forty seconds without an event', () => {
   assert.equal(isReconnecting(10_000, 50_000), false);
@@ -11,6 +11,31 @@ test('connection is considered stale only after forty seconds without an event',
 test('request sequence identifies responses that have become stale', () => {
   assert.equal(isStaleRequest(4, 5), true);
   assert.equal(isStaleRequest(5, 5), false);
+});
+
+test('a phase snapshot is current only when no phase event arrived after the request', () => {
+  assert.equal(isPhaseSnapshotCurrent(3, 3), true);
+  assert.equal(isPhaseSnapshotCurrent(3, 4), false);
+});
+
+test('an entry response sent before the teacher started does not revert the answering phase', () => {
+  // 學生進場後送出 GET /api/student/entry（版本 0），老師此時開始搶答，phase 事件先到（版本 1），
+  // 較舊的進場回應才抵達，回應中的「準備中」不得覆蓋「搶答中」。
+  assert.equal(resolveResponsePhase({
+    responsePhase: '準備中', currentPhase: '搶答中', requestPhaseVersion: 0, currentPhaseVersion: 1,
+  }), '搶答中');
+  assert.equal(resolveResponsePhase({
+    responsePhase: '搶答中', currentPhase: '已結束', requestPhaseVersion: 2, currentPhaseVersion: 3,
+  }), '已結束');
+});
+
+test('a response phase applies when no newer phase event arrived', () => {
+  assert.equal(resolveResponsePhase({
+    responsePhase: '搶答中', currentPhase: '準備中', requestPhaseVersion: 1, currentPhaseVersion: 1,
+  }), '搶答中');
+  assert.equal(resolveResponsePhase({
+    responsePhase: undefined, currentPhase: '準備中', requestPhaseVersion: 1, currentPhaseVersion: 1,
+  }), '準備中');
 });
 
 test('valid entry proceeds to waiting screen', () => {

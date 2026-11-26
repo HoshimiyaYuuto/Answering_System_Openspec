@@ -1,4 +1,4 @@
-import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, isReconnecting, isStaleRequest, mergeSubmissions, mergeVoided, reconcileVoided, applyVoid, validateAnswers, formatRemaining } from './logic.js';
+import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, isPhaseSnapshotCurrent, isReconnecting, isStaleRequest, mergeSubmissions, resolveResponsePhase, mergeVoided, reconcileVoided, applyVoid, validateAnswers, formatRemaining } from './logic.js';
 import { createDraftStore } from './drafts.js';
 import {
   applyDocumentLanguage,
@@ -80,6 +80,8 @@ waiting.append(changeGroupButton);
 let studentId;
 let storedStudentId = false;
 let phase = '準備中';
+// 每收到一次 phase 事件就加一；請求送出時記下版本，回應抵達時版本已變表示回應中的階段較舊。
+let phaseVersion = 0;
 let lastEventAt = null;
 let changingGroup = false;
 let groupsRequestId = 0;
@@ -175,7 +177,7 @@ function updateWaitingView() {
   changeGroupButton.hidden = !display.canChangeGroup;
 }
 
-function showEntryResult(response) {
+function showEntryResult(response, requestPhaseVersion = phaseVersion) {
   const next = getEntryNextStep(response, t);
   if (next.screen === 'waiting') {
     clearClosedEntryRetry();
@@ -188,7 +190,12 @@ function showEntryResult(response) {
     }
     currentEntry = next.entry;
     groupName.textContent = next.entry.group.name;
-    if (next.entry.phase) phase = next.entry.phase;
+    phase = resolveResponsePhase({
+      responsePhase: next.entry.phase,
+      currentPhase: phase,
+      requestPhaseVersion,
+      currentPhaseVersion: phaseVersion,
+    });
     ensureEventSource();
     showPhaseScreen();
     return;
@@ -738,10 +745,11 @@ async function loadGroups(message = '') {
 
 async function restoreEntry() {
   if (!studentId) return null;
+  const requestPhaseVersion = phaseVersion;
   try {
     const entry = await requestJson(`/api/student/entry?studentId=${encodeURIComponent(studentId)}`);
     const next = getStoredEntryNextStep(storedStudentId, entry, t);
-    if (next.screen === 'waiting') showEntryResult(entry);
+    if (next.screen === 'waiting') showEntryResult(entry, requestPhaseVersion);
     else showSelection(next.shouldExplain ? next.message : '');
     return entry;
   } catch (error) {
@@ -754,6 +762,7 @@ async function enterGroup(groupId, button) {
   const isNewStudent = !studentId;
   const pendingStudentId = studentId || createStudentId();
   for (const item of groupList.querySelectorAll('button')) item.disabled = true;
+  const requestPhaseVersion = phaseVersion;
   try {
     const response = await requestJson('/api/student/entry', {
       method: 'PUT',
@@ -761,7 +770,7 @@ async function enterGroup(groupId, button) {
       body: JSON.stringify({ studentId: pendingStudentId, groupId }),
     });
     if (isNewStudent) persistStudentId(pendingStudentId);
-    showEntryResult(response);
+    showEntryResult(response, requestPhaseVersion);
   } catch (error) {
     if (error.code === 'GROUP_NOT_FOUND') await loadGroups(t('selection.groupGone'));
     else if (error.code === 'GROUP_CHANGE_NOT_ALLOWED' && changingGroup) {
@@ -778,6 +787,7 @@ async function synchronizeFromServer() {
   const requestedStudentId = studentId;
   const requestedGroupId = currentEntry?.group?.id;
   const submissionsRequestId = currentEntry?.valid ? ++submissionsSnapshotRequestId : null;
+  const requestPhaseVersion = phaseVersion;
   try {
     const submissionsPath = requestedStudentId && currentEntry?.valid
       ? `/api/student/submissions?studentId=${encodeURIComponent(requestedStudentId)}`
@@ -790,11 +800,19 @@ async function synchronizeFromServer() {
     if (isStaleRequest(requestId, synchronizationRequestId)
       || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return;
     if (currentEntry?.valid) {
-      updateActivityId(session?.data);
-      const phaseChanged = phase !== session.data.phase;
+      // 等待期間若已收到較新的 phase 事件，這份 session 摘要的階段與 activityId 已過期，不予套用。
+      const sessionPhaseCurrent = isPhaseSnapshotCurrent(requestPhaseVersion, phaseVersion);
+      if (sessionPhaseCurrent) updateActivityId(session?.data);
+      const nextPhase = resolveResponsePhase({
+        responsePhase: session?.data?.phase,
+        currentPhase: phase,
+        requestPhaseVersion,
+        currentPhaseVersion: phaseVersion,
+      });
+      const phaseChanged = phase !== nextPhase;
       recordServerTime(session?.data);
-      if (phaseChanged && session.data.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
-      phase = session.data.phase;
+      if (phaseChanged && nextPhase === '已結束' && answeringView === 'question') saveCurrentDraft();
+      phase = nextPhase;
       const before = activeQuestionId !== null ? questionLockState(activeQuestionId) : null;
       if (!isStaleRequest(submissionsRequestId, submissionsSnapshotRequestId)) {
         applyGroupSnapshot(submissionsResponse?.data);
@@ -834,6 +852,7 @@ function handlePhase(event) {
     lastEventAt = Date.now();
     reconnectBanner.hidden = true;
     if (update.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
+    phaseVersion += 1;
     phase = update.phase;
     recordServerTime(update);
     if (currentEntry?.valid) showPhaseScreen();
@@ -1001,6 +1020,7 @@ async function confirmEntryAfterClosedEventSource(source) {
   }
   if (closedEntryCheckSource === source || closedEntryRetrySource === source) return;
   const requestedStudentId = studentId;
+  const requestPhaseVersion = phaseVersion;
   closedEntryCheckSource = source;
   try {
     const entry = await requestJson(`/api/student/entry?studentId=${encodeURIComponent(requestedStudentId)}`);
@@ -1008,7 +1028,7 @@ async function confirmEntryAfterClosedEventSource(source) {
     clearClosedEntryRetry(source);
     const next = getStoredEntryNextStep(storedStudentId, entry, t);
     if (next.screen === 'waiting') {
-      showEntryResult(entry);
+      showEntryResult(entry, requestPhaseVersion);
       return;
     }
     showSelection(next.message || t('entry.expired'));
