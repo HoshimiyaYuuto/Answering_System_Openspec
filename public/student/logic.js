@@ -51,8 +51,9 @@ export function getAnsweringScreen(entryValid, phase) {
   return 'select-group';
 }
 
-export function getQuestionStatus(hasSubmission, hasDraft) {
+export function getQuestionStatus(hasSubmission, hasDraft, isVoided = false) {
   if (hasSubmission) return 'submitted';
+  if (isVoided) return 'voided';
   if (hasDraft) return 'draft';
   return 'unanswered';
 }
@@ -84,15 +85,61 @@ export function applySubmission(submissions, submission) {
   return next;
 }
 
+// a 的時間嚴格晚於 b；任一方不是有效時間時視為不晚（server 時間皆為 ISO 8601 UTC）
+function isLater(a, b) {
+  const left = Date.parse(a);
+  const right = Date.parse(b);
+  return Number.isFinite(left) && Number.isFinite(right) && left > right;
+}
+
+// 同題保留較新的作答；時間相同或無法比較時保留本機的（add-student-void-notice design 第 2 節）
 export function mergeSubmissions(current, snapshot) {
   const merged = new Map();
   for (const submission of Array.isArray(snapshot) ? snapshot : []) {
     merged.set(submission.questionId, { ...submission, answers: [...submission.answers] });
   }
   for (const submission of Array.isArray(current) ? current : []) {
+    const fromSnapshot = merged.get(submission.questionId);
+    if (fromSnapshot && isLater(fromSnapshot.submittedAt, submission.submittedAt)) continue;
     merged.set(submission.questionId, { ...submission, answers: [...submission.answers] });
   }
   return [...merged.values()];
+}
+
+// 依題號合併作廢紀錄，保留較晚的作廢時間
+export function mergeVoided(current, snapshot) {
+  const merged = new Map();
+  for (const item of [...(Array.isArray(current) ? current : []), ...(Array.isArray(snapshot) ? snapshot : [])]) {
+    const existing = merged.get(item.questionId);
+    if (!existing || isLater(item.voidedAt, existing.voidedAt)) merged.set(item.questionId, { ...item });
+  }
+  return [...merged.values()];
+}
+
+// 同題同時有作答與作廢時：作答晚於作廢是重送，移除作廢；否則作答已被作廢，移除作答（design 第 1 節）
+export function reconcileVoided(submissions, voided) {
+  const currentSubmissions = Array.isArray(submissions) ? submissions : [];
+  const currentVoided = Array.isArray(voided) ? voided : [];
+  const voidedByQuestion = new Map(currentVoided.map((item) => [item.questionId, item]));
+  const submissionByQuestion = new Map(currentSubmissions.map((item) => [item.questionId, item]));
+  return {
+    submissions: currentSubmissions
+      .filter((item) => {
+        const voidedItem = voidedByQuestion.get(item.questionId);
+        return !voidedItem || isLater(item.submittedAt, voidedItem.voidedAt);
+      })
+      .map((item) => ({ ...item, answers: [...item.answers] })),
+    voided: currentVoided
+      .filter((item) => {
+        const submission = submissionByQuestion.get(item.questionId);
+        return !submission || !isLater(submission.submittedAt, item.voidedAt);
+      })
+      .map((item) => ({ ...item })),
+  };
+}
+
+export function applyVoid(state, update) {
+  return reconcileVoided(state?.submissions, mergeVoided(state?.voided, [update]));
 }
 
 export function getSubmitErrorNextStep(error) {

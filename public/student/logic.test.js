@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers } from './logic.js';
+import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers, mergeVoided, reconcileVoided, applyVoid } from './logic.js';
 
 test('connection is considered stale only after forty seconds without an event', () => {
   assert.equal(isReconnecting(10_000, 50_000), false);
@@ -199,4 +199,63 @@ test('result answer formatting preserves HTML characters as plain text content',
   }] });
   assert.equal(result.rows[0].winnerText, `第 1 組：${answer}`);
   assert.equal(result.rows[0].ownText, `本組第 1 名（成功）：${answer}`);
+});
+
+// ---- add-student-void-notice task 1.1 ----
+
+const T = (second) => `2026-11-26T01:00:${String(second).padStart(2, '0')}.000Z`;
+const sub = (questionId, second, answer = '答') => ({ questionId, answers: [answer], submittedAt: T(second) });
+const voidOf = (questionId, second) => ({ questionId, voidedAt: T(second) });
+
+test('a void later than the submission removes the submission', () => {
+  const state = applyVoid({ submissions: [sub(1, 1), sub(2, 1)], voided: [] }, voidOf(1, 5));
+  assert.deepEqual(state, { submissions: [sub(2, 1)], voided: [voidOf(1, 5)] });
+});
+
+test('a resubmission later than the void removes the void', () => {
+  assert.deepEqual(reconcileVoided([sub(1, 9, '重送')], [voidOf(1, 5)]), { submissions: [sub(1, 9, '重送')], voided: [] });
+});
+
+test('an old snapshot arriving after a void event does not lock the question again', () => {
+  const afterEvent = applyVoid({ submissions: [sub(1, 1)], voided: [] }, voidOf(1, 5));
+  const snapshot = { submissions: [sub(1, 1)], voided: [] };
+  const merged = reconcileVoided(mergeSubmissions(afterEvent.submissions, snapshot.submissions), mergeVoided(afterEvent.voided, snapshot.voided));
+  assert.deepEqual(merged, { submissions: [], voided: [voidOf(1, 5)] });
+});
+
+test('an old snapshot arriving after a resubmission does not bring the void notice back', () => {
+  const current = { submissions: [sub(1, 9, '重送')], voided: [] };
+  const snapshot = { submissions: [], voided: [voidOf(1, 5)] };
+  const merged = reconcileVoided(mergeSubmissions(current.submissions, snapshot.submissions), mergeVoided(current.voided, snapshot.voided));
+  assert.deepEqual(merged, { submissions: [sub(1, 9, '重送')], voided: [] });
+});
+
+test('repeated voids of a question keep the latest time', () => {
+  assert.deepEqual(mergeVoided([voidOf(1, 5)], [voidOf(1, 3), voidOf(2, 4)]), [voidOf(1, 5), voidOf(2, 4)]);
+  assert.deepEqual(mergeVoided([voidOf(1, 3)], [voidOf(1, 8)]), [voidOf(1, 8)]);
+  assert.deepEqual(mergeVoided(null, undefined), []);
+});
+
+test('a snapshot submission newer than the local one replaces it', () => {
+  assert.deepEqual(mergeSubmissions([sub(1, 1, '舊')], [sub(1, 9, '新')]), [sub(1, 9, '新')]);
+  assert.deepEqual(mergeSubmissions([sub(1, 9, '本機')], [sub(1, 9, '快照')]), [sub(1, 9, '本機')], 'equal time keeps local');
+});
+
+test('question status order is submitted, voided, draft, unanswered', () => {
+  assert.equal(getQuestionStatus(true, true, true), 'submitted');
+  assert.equal(getQuestionStatus(false, true, true), 'voided');
+  assert.equal(getQuestionStatus(false, true, false), 'draft');
+  assert.equal(getQuestionStatus(false, false, false), 'unanswered');
+  assert.equal(getQuestionStatus(false, true), 'draft', 'two-argument calls are unchanged');
+});
+
+test('void helpers do not mutate their inputs', () => {
+  const submissions = [sub(1, 1), sub(2, 1)];
+  const voided = [voidOf(1, 5)];
+  const frozen = JSON.stringify({ submissions, voided });
+  applyVoid({ submissions, voided }, voidOf(2, 6));
+  reconcileVoided(submissions, voided);
+  mergeVoided(voided, [voidOf(1, 7)]);
+  mergeSubmissions(submissions, [sub(1, 9)]);
+  assert.equal(JSON.stringify({ submissions, voided }), frozen);
 });
