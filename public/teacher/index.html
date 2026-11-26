@@ -52,6 +52,12 @@
     .monitor-list ul { margin: 0; padding: 0 12px 12px 2em; line-height: 1.7; }
     .monitor-list .voided { color: #8a94a8; text-decoration: line-through; }
     .monitor-list .void-button { width: auto; min-height: 36px; margin: 0 0 0 8px; padding: 4px 12px; font-size: .9rem; vertical-align: middle; }
+    .countdown-setup { margin-top: 12px; }
+    .countdown-setup .check { display: flex; align-items: center; gap: 8px; margin: 0; }
+    .countdown-setup .check input { width: 22px; min-height: 22px; }
+    .countdown-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .countdown-fields label { margin-bottom: 4px; }
+    #countdown-remaining { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -84,13 +90,33 @@
         <dl class="summary-grid">
           <dt>階段</dt><dd id="summary-phase" aria-live="polite">讀取中…</dd>
           <dt>組別與題目</dt><dd id="summary-counts"></dd>
+          <dt id="countdown-label" hidden>倒數</dt><dd id="countdown-remaining" aria-live="off" hidden></dd>
         </dl>
+        <div class="countdown-setup">
+          <label class="check"><input id="countdown-enabled" type="checkbox"> 設定倒數（10 秒到 60 分鐘，時間到自動結束）</label>
+          <div id="countdown-fields" class="countdown-fields" hidden>
+            <div>
+              <label for="countdown-minutes">分</label>
+              <input id="countdown-minutes" type="number" inputmode="numeric" min="0" max="60" step="1" value="5">
+            </div>
+            <div>
+              <label for="countdown-seconds">秒</label>
+              <input id="countdown-seconds" type="number" inputmode="numeric" min="0" max="59" step="1" value="0">
+            </div>
+          </div>
+        </div>
         <button id="start" type="button">開始搶答</button>
         <button id="end" type="button" class="danger">結束搶答</button>
         <div id="end-confirm" class="confirm" hidden>
           <p>確定要結束搶答嗎？結束後學生無法再送出，也不能重新開始。</p>
           <button id="end-confirm-yes" type="button" class="danger">確認結束</button>
           <button id="end-confirm-no" type="button" class="secondary">取消</button>
+        </div>
+        <button id="reset" type="button" class="secondary">重設活動</button>
+        <div id="reset-confirm" class="confirm" hidden>
+          <p>重設後會清空本場作答與學生進場，組別與題目保留。確定要重設嗎？</p>
+          <button id="reset-confirm-yes" type="button" class="danger">確認重設</button>
+          <button id="reset-confirm-no" type="button" class="secondary">取消</button>
         </div>
         <p id="session-message" class="message" role="status" aria-live="polite"></p>
       </section>
