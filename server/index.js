@@ -584,7 +584,12 @@ export function createApplication({
       });
     }
     // 只記方法與不含 query string 的路徑；body、query 與 cookie 可能含密碼、token 或答案，不記錄
-    logger.error(`[${new Date().toISOString()}] ${request.method} ${request.path} 500 INTERNAL_ERROR\n${error?.stack ?? String(error)}`);
+    // logger 本身出錯時仍要回契約格式的 500，不能掉到 Express 預設的 HTML 錯誤頁
+    try {
+      logger.error(`[${new Date().toISOString()}] ${request.method} ${request.path} 500 INTERNAL_ERROR\n${error?.stack ?? String(error)}`);
+    } catch {
+      // 忽略記錄失敗
+    }
     response.status(500).json({
       error: { code: 'INTERNAL_ERROR', message: '伺服器發生未預期錯誤。' },
     });

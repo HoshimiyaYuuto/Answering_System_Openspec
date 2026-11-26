@@ -179,6 +179,16 @@ test('error log excludes query string, cookies and body', async () => {
   assert.doesNotMatch(logger.lines[0], /stu-secret-query|cookie-secret|body-secret/);
 });
 
+test('a failing logger still yields the 500 JSON envelope', async () => {
+  const logger = { error: () => { throw new Error('logger-broken'); } };
+  await withErrorServer(logger, async (url) => {
+    const response = await fetch(`${url}/api/__test__/error`);
+    assert.equal(response.status, 500);
+    assert.equal(response.headers.get('content-type').split(';')[0], 'application/json');
+    assert.deepEqual(await response.json(), { error: { code: 'INTERNAL_ERROR', message: '伺服器發生未預期錯誤。' } });
+  });
+});
+
 test('client errors are not logged', async () => {
   const logger = createRecordingLogger();
   await withErrorServer(logger, async (url) => {
