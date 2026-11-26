@@ -21,6 +21,7 @@
     .secondary { margin-top: 16px; color: #17366f; background: #e8efff; }
     .message { min-height: 1.6em; color: #a12626; line-height: 1.5; }
     .hint { color: #4b5870; line-height: 1.6; }
+    .countdown { margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; color: #18376f; background: #e8efff; font-weight: 800; font-size: 1.2rem; font-variant-numeric: tabular-nums; }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -40,6 +41,7 @@
     </section>
     <section id="answering" class="card" hidden aria-labelledby="answering-title">
       <h2 id="answering-title">題目</h2>
+      <p id="countdown" class="countdown" aria-live="off" hidden></p>
       <p id="answering-message" class="message" role="status" aria-live="polite" hidden></p>
       <button id="retry-questions" class="secondary" type="button" hidden>重試</button>
       <div id="question-grid" class="question-grid" aria-label="題號" hidden></div>

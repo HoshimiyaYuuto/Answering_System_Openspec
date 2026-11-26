@@ -1,7 +1,19 @@
+// 老師重設活動後的說明；reset 事件與 activity_reset 原因共用（add-student-countdown-and-reset design 第 4 節）
+export const RESET_MESSAGE = '活動已重設，請重新選擇組別';
+
 const ENTRY_REASON_MESSAGES = {
   group_removed: '你原本的組別已被老師移除，請重新選擇組別',
   entry_reset: '進場狀態已失效（例如伺服器重新啟動），請重新選擇組別',
+  activity_reset: RESET_MESSAGE,
 };
+
+// 依 server 時間計算倒數剩餘時間，無條件進位到秒、不小於 0，格式為 m:ss（design 第 1 節）
+export function formatRemaining(countdownEndsAt, serverNowMs) {
+  const endsAt = Date.parse(countdownEndsAt);
+  if (!Number.isFinite(endsAt) || !Number.isFinite(serverNowMs)) return '';
+  const remaining = Math.max(0, Math.ceil((endsAt - serverNowMs) / 1000));
+  return `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
+}
 
 export function isReconnecting(lastEventAt, now = Date.now()) {
   return !Number.isFinite(lastEventAt) || now - lastEventAt > 40_000;

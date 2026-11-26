@@ -1,4 +1,4 @@
-import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, isReconnecting, isStaleRequest, mergeSubmissions, mergeVoided, reconcileVoided, applyVoid, validateAnswers } from './logic.js';
+import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, isReconnecting, isStaleRequest, mergeSubmissions, mergeVoided, reconcileVoided, applyVoid, validateAnswers, formatRemaining, RESET_MESSAGE } from './logic.js';
 import { createDraftStore } from './drafts.js';
 
 const selection = document.querySelector('#selection');
@@ -20,6 +20,7 @@ const resultsList = document.querySelector('#results-list');
 const resultsLoadingMessage = document.querySelector('#results-loading');
 const resultsErrorMessage = document.querySelector('#results-error');
 const retryResultsButton = document.querySelector('#results-retry');
+const countdownDisplay = document.querySelector('#countdown');
 
 let draftStorage;
 try {
@@ -62,6 +63,10 @@ let loadedQuestions = [];
 let loadedSubmissions = [];
 // 本組已被老師作廢且尚未重送的題目 [{ questionId, voidedAt }]（add-student-void-notice）
 let loadedVoided = [];
+// 倒數以 server 時間計算：記下 server 與本機時鐘的差（add-student-countdown-and-reset design 第 2 節）
+let countdownEndsAt = null;
+let clockOffset = 0;
+let countdownTimer = null;
 let activeQuestionId = null;
 let answeringView = 'grid';
 let isSubmitting = false;
@@ -176,6 +181,26 @@ function showPhaseScreen() {
     answeringView = 'grid';
     activeQuestionId = null;
     loadStudentResults();
+  }
+  renderCountdown();
+}
+
+function recordServerTime(data) {
+  if (!data || typeof data !== 'object') return;
+  const serverTime = Date.parse(data.serverTime);
+  if (Number.isFinite(serverTime)) clockOffset = serverTime - Date.now();
+  if ('countdownEndsAt' in data) countdownEndsAt = typeof data.countdownEndsAt === 'string' ? data.countdownEndsAt : null;
+  renderCountdown();
+}
+
+function renderCountdown() {
+  const running = !answering.hidden && phase === '搶答中' && countdownEndsAt !== null;
+  countdownDisplay.hidden = !running;
+  countdownDisplay.textContent = running ? `剩餘時間 ${formatRemaining(countdownEndsAt, Date.now() + clockOffset)}` : '';
+  if (running && countdownTimer === null) countdownTimer = setInterval(renderCountdown, 1000);
+  if (!running && countdownTimer !== null) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
   }
 }
 
@@ -567,6 +592,7 @@ async function submitCurrentQuestion() {
       try {
         const session = await requestJson('/api/session');
         phase = session.data.phase;
+        recordServerTime(session.data);
         if (phase === '已結束') showPhaseScreen();
         else messageForCurrentQuestion(error.message);
       } catch (refreshError) {
@@ -626,6 +652,7 @@ async function loadAnsweringData() {
     projectVoided(submissionsResponse?.data?.voided);
     if (!Array.isArray(questions)) throw new Error('伺服器回應格式錯誤。');
     updateActivityId(sessionResponse?.data);
+    recordServerTime(sessionResponse?.data);
     loadedQuestions = questions;
     if (!isStaleRequest(snapshotRequestId, submissionsSnapshotRequestId)) {
       applyGroupSnapshot(submissionsResponse?.data);
@@ -732,6 +759,7 @@ async function synchronizeFromServer() {
     if (currentEntry?.valid) {
       updateActivityId(session?.data);
       const phaseChanged = phase !== session.data.phase;
+      recordServerTime(session?.data);
       if (phaseChanged && session.data.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
       phase = session.data.phase;
       const before = activeQuestionId !== null ? questionLockState(activeQuestionId) : null;
@@ -774,15 +802,23 @@ function handlePhase(event) {
     reconnectBanner.hidden = true;
     if (update.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
     phase = update.phase;
+    recordServerTime(update);
     if (currentEntry?.valid) showPhaseScreen();
   } catch {
     // Ignore malformed event data; the next session snapshot will resynchronize.
   }
 }
 
-function handleHeartbeat() {
+function handleHeartbeat(event) {
   lastEventAt = Date.now();
   reconnectBanner.hidden = true;
+  // heartbeat 只帶 serverTime：只更新時鐘差，不改倒數結束時間
+  try {
+    const update = typeof event?.data === 'string' ? JSON.parse(event.data) : null;
+    if (update && typeof update === 'object' && !Array.isArray(update)) recordServerTime({ serverTime: update.serverTime });
+  } catch {
+    // Ignore malformed heartbeat data.
+  }
 }
 
 function handleSubmission(event) {
@@ -843,6 +879,17 @@ function handleVoid(event) {
   }
 }
 
+// 老師重設活動：回選組頁並說明；上一場的草稿不再儲存（add-student-countdown-and-reset design 第 3 節）
+function handleReset() {
+  if (!currentEntry?.valid) return;
+  lastEventAt = Date.now();
+  reconnectBanner.hidden = true;
+  countdownEndsAt = null;
+  activeQuestionId = null;
+  answeringView = 'grid';
+  showSelection(RESET_MESSAGE);
+}
+
 function ensureEventSource() {
   const targetUrl = currentEntry?.valid && studentId
     ? `/api/events?studentId=${encodeURIComponent(studentId)}`
@@ -863,6 +910,7 @@ function ensureEventSource() {
   source.addEventListener('heartbeat', handleHeartbeat);
   source.addEventListener('submission', handleSubmission);
   source.addEventListener('void', handleVoid);
+  source.addEventListener('reset', handleReset);
   source.addEventListener('error', () => {
     if (source !== eventSource) return;
     if (getEventErrorNextStep(source.readyState).action === 'restore-entry') {

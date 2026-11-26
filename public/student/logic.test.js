@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers, mergeVoided, reconcileVoided, applyVoid } from './logic.js';
+import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers, mergeVoided, reconcileVoided, applyVoid, formatRemaining, RESET_MESSAGE } from './logic.js';
 
 test('connection is considered stale only after forty seconds without an event', () => {
   assert.equal(isReconnecting(10_000, 50_000), false);
@@ -258,4 +258,36 @@ test('void helpers do not mutate their inputs', () => {
   mergeVoided(voided, [voidOf(1, 7)]);
   mergeSubmissions(submissions, [sub(1, 9)]);
   assert.equal(JSON.stringify({ submissions, voided }), frozen);
+});
+test('activity_reset explains the reset and other reasons keep their messages', () => {
+  assert.equal(RESET_MESSAGE, '活動已重設，請重新選擇組別');
+  assert.deepEqual(getEntryNextStep({ data: { valid: false, reason: 'activity_reset' } }), {
+    screen: 'select-group', reason: 'activity_reset', message: RESET_MESSAGE,
+  });
+  const stored = getStoredEntryNextStep(true, { data: { valid: false, reason: 'activity_reset' } });
+  assert.equal(stored.message, RESET_MESSAGE);
+  assert.equal(stored.shouldExplain, true);
+  assert.equal(getEntryNextStep({ data: { valid: false, reason: 'group_removed' } }).message, '你原本的組別已被老師移除，請重新選擇組別');
+  assert.equal(getEntryNextStep({ data: { valid: false, reason: 'entry_reset' } }).message, '進場狀態已失效（例如伺服器重新啟動），請重新選擇組別');
+});
+
+test('formatRemaining follows the server time, rounds up and never goes below zero', () => {
+  const endsAt = '2026-11-27T01:01:00.000Z';
+  const server = (iso) => Date.parse(iso);
+  assert.equal(formatRemaining(endsAt, server('2026-11-27T01:00:00.000Z')), '1:00');
+  assert.equal(formatRemaining(endsAt, server('2026-11-27T01:00:59.001Z')), '0:01');
+  assert.equal(formatRemaining(endsAt, server('2026-11-27T01:01:00.000Z')), '0:00');
+  assert.equal(formatRemaining(endsAt, server('2026-11-27T02:00:00.000Z')), '0:00');
+  assert.equal(formatRemaining('2026-11-27T02:00:00.000Z', server('2026-11-27T01:00:00.000Z')), '60:00');
+  assert.equal(formatRemaining(null, server('2026-11-27T01:00:00.000Z')), '');
+  assert.equal(formatRemaining(endsAt, Number.NaN), '');
+});
+
+test('a device clock two minutes slow gives the same remaining time once the offset is applied', () => {
+  const endsAt = '2026-11-27T01:01:00.000Z';
+  const serverNow = Date.parse('2026-11-27T01:00:30.000Z');
+  const deviceNow = serverNow - 120_000;
+  const clockOffset = serverNow - deviceNow;
+  assert.equal(formatRemaining(endsAt, deviceNow + clockOffset), formatRemaining(endsAt, serverNow));
+  assert.equal(formatRemaining(endsAt, deviceNow + clockOffset), '0:30');
 });
