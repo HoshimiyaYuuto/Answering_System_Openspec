@@ -190,6 +190,30 @@ export function createApplication({
     }
   });
 
+  // 作廢只通知被作廢組別的學生連線（不含順位）與已登入老師的連線（D24，design 第 4 節）
+  submissions.subscribeVoid((submission) => {
+    const payload = JSON.stringify({ questionId: submission.questionId, voidedAt: submission.voidedAt });
+    for (const client of eventClients) {
+      if (!client.studentId) continue;
+      const current = session.groups.lookup(client.studentId, session.phase);
+      if (current.data?.valid && current.data.group.id === submission.groupId) {
+        safeWrite(client.response, `event: void
+data: ${payload}
+
+`);
+      }
+    }
+    const notice = JSON.stringify({ serverTime: new Date().toISOString() });
+    for (const client of eventClients) {
+      if (client.teacherToken && teacherAuth.isValid(client.teacherToken)) {
+        safeWrite(client.response, `event: monitor
+data: ${notice}
+
+`);
+      }
+    }
+  });
+
   app.get('/api/session', (_request, response) => {
     response.json({ data: sessionSummary() });
   });
@@ -288,7 +312,9 @@ export function createApplication({
     const entry = lookupStudentEntry(request.query.studentId, response);
     if (!entry) return;
     const ownSubmissions = submissions.listByGroup(entry.group.id).map(({ questionId, answers, submittedAt }) => ({ questionId, answers, submittedAt }));
-    return response.json({ data: { submissions: ownSubmissions } });
+    // voided：本組已被作廢且尚未重送的題目（add-submission-void design 第 5 節）；submissions 形狀不變
+    const voided = submissions.listVoidedPendingByGroup(entry.group.id);
+    return response.json({ data: { submissions: ownSubmissions, voided } });
   });
 
   app.get('/api/student/results', (request, response) => {
@@ -487,6 +513,30 @@ export function createApplication({
   });
 
   // 結果 csv（add-results-csv-export design 第 1 節）：只需已結束，與學習單來源無關
+  // 老師作廢一筆有效作答；檢查順序見 design 第 2 節
+  app.post('/api/teacher/submissions/void', requireTeacher, (request, response) => {
+    const questionId = request.body?.questionId;
+    const rank = request.body?.rank;
+    const isPositiveInteger = (value) => Number.isInteger(value) && value > 0;
+    if (!isPositiveInteger(questionId) || !isPositiveInteger(rank)) {
+      return response.status(400).json({ error: { code: 'INVALID_VOID_REQUEST', message: '題號與順位必須是正整數。' } });
+    }
+    if (session.phase !== '搶答中') {
+      return response.status(409).json({ error: { code: 'VOID_NOT_ALLOWED', message: '只能在搶答中作廢作答。' } });
+    }
+    if (!session.questions.some(({ id }) => id === questionId)) {
+      return response.status(404).json({ error: { code: 'QUESTION_NOT_FOUND', message: '找不到指定題目。' } });
+    }
+    const result = submissions.voidSubmission({ questionId, rank });
+    if (!result.ok) {
+      const status = result.code === 'ALREADY_VOIDED' ? 409 : 404;
+      const message = result.code === 'ALREADY_VOIDED' ? '這筆作答已經作廢。' : '找不到這筆作答。';
+      return response.status(status).json({ error: { code: result.code, message } });
+    }
+    const { groupId, voidedAt } = result.submission;
+    return response.json({ data: { questionId, groupId, rank, voidedAt } });
+  });
+
   app.get('/api/teacher/results/csv', requireTeacher, (_request, response) => {
     if (session.phase !== '已結束') {
       return sendExportError(response, 'EXPORT_NOT_ALLOWED', '活動結束後才能匯出。', 409);

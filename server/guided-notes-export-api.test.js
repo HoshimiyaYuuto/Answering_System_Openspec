@@ -85,7 +85,7 @@ test('voided submissions are not exported', async () => {
     { questionId: 1, groupId: 1, answers: ['作廢的答案'], submittedAt: '2026-11-22T00:00:00.000Z', rank: 1, status: 'voided' },
     { questionId: 1, groupId: 2, answers: ['有效答案'], submittedAt: '2026-11-22T00:00:01.000Z', rank: 2, status: 'valid' },
   ];
-  const submissions = { listSubmissions: () => records.map((record) => ({ ...record })), listByGroup: () => [], subscribe: () => () => {}, submit: () => ({ ok: false, code: 'SUBMISSION_NOT_ALLOWED' }) };
+  const submissions = { listSubmissions: () => records.map((record) => ({ ...record })), listByGroup: () => [], subscribe: () => () => {}, subscribeVoid: () => () => {}, submit: () => ({ ok: false, code: 'SUBMISSION_NOT_ALLOWED' }) };
   const app = await startApp({ submissions });
   try {
     await app.importFile('01-official-single.xlsx');

@@ -20,12 +20,12 @@
   answers: ['細胞膜', '粒線體'],        // trim 後的答案；第 i 個對應該題 blanks[i]
   submittedAt: '2026-11-21T08:00:00.000Z',  // server 收到的時間（ISO 8601 UTC）
   rank: 4,                             // 該題的原始接收順位，從 1 起，不重用
-  status: 'valid',                     // 'valid'｜'voided'（作廢由之後的 change 加入）
-  voidedAt: null,                      // 作廢時間；作廢 change 加入，'valid' 時為 null
+  status: 'valid',                     // 'valid'｜'voided'（作廢由 add-submission-void 加入）
+  voidedAt: null,                      // 作廢時間；由 add-submission-void 加入，'valid' 時為 null
 }
 ```
 
-- `add-buzz-in-submission` 只寫入 `status: 'valid'`。`voidedAt` 已由學生端成員同意採用，只在作廢時寫入，由作廢 change 加入，不影響 buzz-in。
+- `add-buzz-in-submission` 只寫入 `status: 'valid'`。`voidedAt` 已由學生端成員同意採用，只在作廢時寫入，由 `add-submission-void` 加入（作廢端點見 `docs/api-contract.md`「作答作廢」），不影響 buzz-in。
 - 一題內 `rank` 不重複，所以「`questionId` + `rank`」可唯一指定一筆作答，不另設 `id`。
 
 規則：

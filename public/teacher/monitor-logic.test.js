@@ -115,9 +115,25 @@ test('details list places, voided entries, answers, local time and groups not su
   assert.match(time, /^\d{2}:\d{2}:03$/);
   assert.deepEqual(view('搶答中', [voided]).rows[0].details, [
     { text: `已作廢　第 1 組　「錯」　${time}`, voided: true },
-    { text: `第 1 名　第 2 組　「水／冰」　${time}`, voided: false },
+    { text: `第 1 名　第 2 組　「水／冰」　${time}`, voided: false, voidAction: { questionId: 1, rank: 2, groupName: '第 2 組' } },
     { text: '未送出：第 3 組', voided: false },
   ]);
+});
+
+// ---- add-submission-void task 3.1 ----
+
+test('only valid entries while buzzing carry a void action', () => {
+  const mixed = question({
+    entries: [
+      { groupId: 1, groupName: '第 1 組', rank: 1, status: 'voided', place: null, answers: ['錯'], submittedAt: SUBMITTED_AT },
+      { groupId: 2, groupName: '第 2 組', rank: 2, status: 'valid', place: 1, answers: ['水'], submittedAt: SUBMITTED_AT },
+    ],
+  });
+  const buzzing = view('搶答中', [mixed]).rows[0].details;
+  assert.equal(buzzing[0].voidAction, undefined, 'voided entry has no action');
+  assert.deepEqual(buzzing[1].voidAction, { questionId: 1, rank: 2, groupName: '第 2 組' });
+  assert.equal(buzzing[2].voidAction, undefined, 'not-submitted line has no action');
+  for (const line of view('已結束', [mixed]).rows[0].details) assert.equal(line.voidAction, undefined);
 });
 
 test('invalid timestamps render as an empty time', () => {

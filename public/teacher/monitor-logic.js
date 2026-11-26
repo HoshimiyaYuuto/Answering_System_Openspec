@@ -1,4 +1,5 @@
 const PREPARING = '準備中';
+const BUZZING = '搶答中';
 const ENDED = '已結束';
 
 export function createMonitorState() {
@@ -50,7 +51,8 @@ function summaryOf(question, phase, groupCount) {
   return `${count}，第 1 名：${question.winner.groupName} ${answerText(question.winner.answers)}`;
 }
 
-function detailsOf(question) {
+// 只有搶答中的有效作答可以作廢（add-submission-void design 第 6 節）
+function detailsOf(question, phase) {
   const lines = question.entries.map((entry) => ({
     text: [
       entry.status === 'valid' ? (entry.place ? `第 ${entry.place} 名` : '判定中') : '已作廢',
@@ -59,6 +61,9 @@ function detailsOf(question) {
       formatLocalTime(entry.submittedAt),
     ].join('　'),
     voided: entry.status !== 'valid',
+    ...(phase === BUZZING && entry.status === 'valid'
+      ? { voidAction: { questionId: question.id, rank: entry.rank, groupName: entry.groupName } }
+      : {}),
   }));
   if (question.notSubmitted.length > 0) {
     lines.push({ text: `未送出：${question.notSubmitted.map(({ groupName }) => groupName).join('、')}`, voided: false });
@@ -80,7 +85,7 @@ export function getMonitorView(state) {
       label: `第 ${question.id} 題`,
       prompt: question.prompt,
       summary: summaryOf(question, data.phase, data.groupCount),
-      details: detailsOf(question),
+      details: detailsOf(question, data.phase),
     })),
   };
 }

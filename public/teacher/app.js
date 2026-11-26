@@ -613,6 +613,8 @@ const monitorList = document.querySelector('#monitor-list');
 let monitorState = createMonitorState();
 // 記住老師展開的題目，重新整理畫面時保持展開
 const openQuestions = new Set();
+// 送出中的作廢請求（題號:順位），重繪時維持按鈕停用
+const pendingVoids = new Set();
 
 function renderMonitor() {
   const view = getMonitorView(monitorState);
@@ -638,6 +640,18 @@ function renderMonitor() {
       const item = document.createElement('li');
       item.textContent = line.text;
       if (line.voided) item.className = 'voided';
+      if (line.voidAction) {
+        const { questionId, rank, groupName } = line.voidAction;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'danger void-button';
+        button.textContent = '作廢';
+        button.dataset.questionId = String(questionId);
+        button.dataset.rank = String(rank);
+        button.dataset.groupName = groupName;
+        button.disabled = pendingVoids.has(`${questionId}:${rank}`);
+        item.append(button);
+      }
       return item;
     }));
     details.append(summary, prompt, list);
@@ -653,6 +667,39 @@ function dispatchMonitor(event) {
 
 function monitorChanged() {
   dispatchMonitor({ type: 'changed' });
+}
+
+// 監看畫面每次都整個重繪，所以作廢按鈕用事件委派（add-submission-void design 第 6 節）
+monitorList.addEventListener('click', (event) => {
+  const button = event.target.closest('button.void-button');
+  if (!button) return;
+  const questionId = Number(button.dataset.questionId);
+  const rank = Number(button.dataset.rank);
+  if (!window.confirm(`確定作廢「${button.dataset.groupName}」第 ${questionId} 題的作答？該組可重新送出。`)) return;
+  voidSubmission(questionId, rank);
+});
+
+async function voidSubmission(questionId, rank) {
+  const key = `${questionId}:${rank}`;
+  if (pendingVoids.has(key)) return;
+  pendingVoids.add(key);
+  renderMonitor();
+  try {
+    // 成功後不自行改畫面，等 monitor 通知重新讀取
+    await requestJson('/api/teacher/submissions/void', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ questionId, rank }),
+    });
+    pendingVoids.delete(key);
+    renderMonitor();
+  } catch (error) {
+    pendingVoids.delete(key);
+    renderMonitor();
+    if (handleAuthError(error)) return;
+    monitorHint.hidden = false;
+    monitorHint.textContent = `作廢失敗：${error.message}`;
+  }
 }
 
 async function loadMonitor() {
