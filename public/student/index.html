@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f7fb">
-  <title>學生選組｜課堂搶答</title>
+  <title data-i18n="page.title">學生選組｜課堂搶答</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; color: #172033; background: #f4f7fb; }
     * { box-sizing: border-box; }
@@ -23,39 +23,46 @@
     .hint { color: #4b5870; line-height: 1.6; }
     .countdown { margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; color: #18376f; background: #e8efff; font-weight: 800; font-size: 1.2rem; font-variant-numeric: tabular-nums; }
     [hidden] { display: none !important; }
+    .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .language-switch { display: inline-flex; flex: none; border: 1px solid #aab5c8; border-radius: 10px; overflow: hidden; }
+    .language-switch button { width: auto; min-height: 40px; padding: 6px 14px; border-radius: 0; color: #17366f; background: white; font-size: .95rem; }
+    .language-switch button[aria-pressed="true"] { color: white; background: #17366f; }
   </style>
 </head>
 <body>
   <main>
-    <h1>課堂搶答</h1>
+    <div class="top">
+      <h1 data-i18n="app.heading">課堂搶答</h1>
+      <div id="language-switch" class="language-switch"></div>
+    </div>
     <section id="selection" class="card" aria-labelledby="selection-title">
-      <h2 id="selection-title">選擇組別</h2>
+      <h2 id="selection-title" data-i18n="selection.title">選擇組別</h2>
       <p id="status" class="message" role="status" aria-live="polite"></p>
       <div id="groups" class="group-list"></div>
-      <button id="refresh" class="secondary" type="button" hidden>重新整理</button>
+      <button id="refresh" class="secondary" type="button" hidden data-i18n="selection.refresh">重新整理</button>
     </section>
     <section id="waiting" class="card" hidden aria-labelledby="waiting-title">
-      <h2 id="waiting-title">等待活動</h2>
-      <p>你的組別：<strong id="group-name"></strong></p>
+      <h2 id="waiting-title" data-i18n="waiting.title">等待活動</h2>
+      <p><span data-i18n="waiting.groupLabel">你的組別：</span><strong id="group-name"></strong></p>
       <p id="phase-text" class="hint" aria-live="polite"></p>
     </section>
     <section id="answering" class="card" hidden aria-labelledby="answering-title">
-      <h2 id="answering-title">題目</h2>
+      <h2 id="answering-title" data-i18n="answering.title">題目</h2>
       <p id="countdown" class="countdown" aria-live="off" hidden></p>
       <p id="answering-message" class="message" role="status" aria-live="polite" hidden></p>
-      <button id="retry-questions" class="secondary" type="button" hidden>重試</button>
-      <div id="question-grid" class="question-grid" aria-label="題號" hidden></div>
+      <button id="retry-questions" class="secondary" type="button" hidden data-i18n="common.retry">重試</button>
+      <div id="question-grid" class="question-grid" aria-label="題號" data-i18n-attr="aria-label:answering.gridLabel" hidden></div>
       <div id="question-page" hidden></div>
     </section>
     <section id="ended" class="card" hidden aria-labelledby="ended-title">
-      <h2 id="ended-title">活動已結束</h2>
-      <section id="results-section" hidden aria-label="活動結果">
+      <h2 id="ended-title" data-i18n="ended.title">活動已結束</h2>
+      <section id="results-section" hidden aria-label="活動結果" data-i18n-attr="aria-label:results.label">
         <p id="results-summary" hidden></p>
         <p id="results-fair-ranking" class="hint" hidden></p>
         <ul id="results-list" hidden></ul>
-        <p id="results-loading" class="hint" aria-live="polite" hidden>正在載入結果…</p>
+        <p id="results-loading" class="hint" aria-live="polite" hidden data-i18n="results.loading">正在載入結果…</p>
         <p id="results-error" class="message" role="status" aria-live="polite" hidden></p>
-        <button id="results-retry" class="secondary" type="button" hidden>重試</button>
+        <button id="results-retry" class="secondary" type="button" hidden data-i18n="common.retry">重試</button>
       </section>
     </section>
   </main>
