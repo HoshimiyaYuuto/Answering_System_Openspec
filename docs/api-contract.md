@@ -31,6 +31,7 @@
     "questionCount": 0,
     "groupCount": 0,
     "countdownEndsAt": null,
+    "fairRankingEnabled": false,
     "serverTime": "2026-11-14T00:00:00.000Z"
   }
 }
@@ -40,6 +41,7 @@
 `groupCount` 為目前實際組別數。
 `activityId` 在首場開始前為 `null`；每次成功開始搶答時由 server 產生新的 UUID，並在該場活動期間（含已結束階段）保持不變，重設活動後回到 `null`。學生端可用它區隔本場草稿；此識別碼不包含組別或作答資訊。重啟 server 後，新的活動會取得新的識別碼。
 `countdownEndsAt` 是倒數結束的時間（ISO 8601 UTC），只在搶答中且開始時設定了倒數才有值，其他情況為 `null`。剩餘時間請以 `countdownEndsAt` 減去 `serverTime` 計算，不要用用戶端時鐘（共同契約 D15）。
+`fairRankingEnabled` 為本場是否啟用公平順位（共同契約 D14），由開始搶答時的設定決定；首場開始前與重設後為 `false`，搶答中與已結束維持開始時的值。
 
 ## 老師登入
 
@@ -105,20 +107,21 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSessi
 
 ### `POST /api/session/start`
 
-僅允許 `準備中` 轉為 `搶答中`。body 可以為空，或帶倒數秒數（共同契約 D15、D20）：
+僅允許 `準備中` 轉為 `搶答中`。body 可以為空，或帶倒數秒數（共同契約 D15、D20）與公平順位設定（共同契約 D14）：
 
 ```json
-{ "countdownSeconds": 300 }
+{ "countdownSeconds": 300, "fairRankingEnabled": true }
 ```
 
-`countdownSeconds` 省略或為 `null` 表示不倒數。依序檢查：
+`countdownSeconds` 省略或為 `null` 表示不倒數。`fairRankingEnabled` 省略表示不啟用，有帶時必須是布林值（`null` 也會被拒絕）；開始後到重設前都不能變更。依序檢查：
 
 1. 階段不是 `準備中` → `409 INVALID_PHASE_TRANSITION`
 2. 沒有任何組別 → `409 NO_GROUPS`
 3. 沒有任何題目 → `409 QUESTIONS_REQUIRED`
 4. `countdownSeconds` 不是 10 至 3600 的整數 → `400 COUNTDOWN_OUT_OF_RANGE`（訊息「倒數時間需介於 10 秒到 60 分鐘。」）
+5. `fairRankingEnabled` 不是布林值 → `400 INVALID_FAIR_RANKING`（訊息「公平順位設定必須是是或否。」）
 
-成功回 `200`，並回傳更新後的 `phase`、`countdownEndsAt` 與 `serverTime`。被拒絕時階段不變，也不發布階段事件。
+成功回 `200`，並回傳更新後的 `phase`、`countdownEndsAt`、`fairRankingEnabled` 與 `serverTime`。被拒絕時階段不變，也不發布階段事件。
 
 有倒數時，server 在 `countdownEndsAt` 自動把階段改為 `已結束`，效果與老師呼叫 `POST /api/session/end` 相同：發布階段事件，之後的送出被拒絕。倒數存在 server 記憶體，server 重啟後就消失。
 
@@ -132,7 +135,7 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSessi
 
 重設時：
 
-- **清空**：本場所有作答（含已作廢）、所有學生進場紀錄、倒數，`activityId` 回到 `null`。
+- **清空**：本場所有作答（含已作廢）、所有學生進場紀錄、倒數，`activityId` 回到 `null`，公平順位設定回到不啟用（`fairRankingEnabled: false`）。
 - **保留**：組別、已匯入的題目與學習單來源、老師登入狀態。
 - **連線**：以學生身分連線的事件串流（`/api/events?studentId=...`）收到 `reset` 事件後由 server 關閉；其他連線收到 `phase`（`準備中`）並保持開啟。見「階段事件」。
 - 重設前已進場的學生，之後查詢進場會得到 `reason: activity_reset`，需重新選組。
@@ -153,11 +156,11 @@ Invoke-RestMethod -Method Post http://localhost:3000/api/session/start -WebSessi
 
 ```text
 event: phase
-data: {"phase":"搶答中","countdownEndsAt":"2026-11-14T00:05:00.000Z","serverTime":"2026-11-14T00:00:00.000Z"}
+data: {"phase":"搶答中","countdownEndsAt":"2026-11-14T00:05:00.000Z","fairRankingEnabled":false,"serverTime":"2026-11-14T00:00:00.000Z"}
 
 ```
 
-`countdownEndsAt` 與 `GET /api/session` 相同，沒有倒數時為 `null`。每次階段變化（含倒數歸零自動結束、重設回準備中）後兩秒內通知所有已連線 client。
+`countdownEndsAt`、`fairRankingEnabled` 與 `GET /api/session` 相同，沒有倒數時 `countdownEndsAt` 為 `null`。每次階段變化（含倒數歸零自動結束、重設回準備中）後兩秒內通知所有已連線 client。
 
 老師重設活動時，學生連線先收到 `reset` 事件，接著連線被 server 關閉；事件內容只有 server 時間，不含作答或組別資訊：
 
@@ -188,6 +191,7 @@ client 若超過 40 秒沒收到任何事件（含 `phase` 與 `heartbeat`），
 | 400 | `INVALID_JSON` | JSON 格式錯誤或請求欄位無效 |
 | 400 | `INVALID_LOGIN_REQUEST` | 登入請求缺少密碼或密碼不是字串 |
 | 400 | `COUNTDOWN_OUT_OF_RANGE` | 開始搶答的 `countdownSeconds` 不是 10 至 3600 的整數 |
+| 400 | `INVALID_FAIR_RANKING` | 開始搶答的 `fairRankingEnabled` 不是布林值 |
 | 401 | `TEACHER_AUTH_REQUIRED` | 呼叫需老師登入的端點時未登入或登入已失效 |
 | 401 | `WRONG_PASSWORD` | 老師密碼錯誤 |
 | 403 | `LOOPBACK_ONLY` | 僅用於 `NODE_ENV=development` 的開發路由 `/api/dev/phase/:phase`，呼叫來源不是 loopback |
@@ -696,7 +700,7 @@ Invoke-WebRequest http://localhost:3000/api/teacher/guided-notes/export -WebSess
 | --- | --- |
 | `questions` | 依題號排序，每題都會出現（包含無人作答） |
 | `prompt` | 題目層敘述（只給老師；學生端題目不含此欄） |
-| `settled` | `false` 表示判定中（公平順位啟用後才會出現），此時 `winner` 為 `null` |
+| `settled` | `false` 表示判定中：啟用公平順位且該題第一個有效作答送達後 3 秒的批次尚未結束；此時 `winner` 為 `null`。活動已結束時一律為 `true` |
 | `winner` | 勝者組別與該筆答案；無有效作答或判定中為 `null` |
 | `winnerSource` | `arrival`／`fair`；`winner` 為 `null` 時為 `null` |
 | `submittedCount` | 該題有效作答數 |
@@ -721,7 +725,7 @@ data: {"serverTime":"2026-11-14T00:00:00.000Z"}
 
 ```
 
-事件只表示「監看資料已改變」，不含作答內容，老師端收到後重新呼叫 `GET /api/teacher/monitor`。老師作廢作答成功後也會送出同一個通知（見「作答作廢」）。每次通知時才檢查登入狀態，老師登出後同一條連線不再收到 `monitor`。學生連線（`studentId`）與未帶參數的公開連線都不會收到 `monitor`。
+事件只表示「監看資料已改變」，不含作答內容，老師端收到後重新呼叫 `GET /api/teacher/monitor`。老師作廢作答成功後也會送出同一個通知（見「作答作廢」）。啟用公平順位且在搶答中時，某題的 3 秒批次結束後 2 秒內也會送出同一個通知，即使期間沒有新的送出，讓「判定中」的題目更新為最終名次；未啟用時不會有這種通知。每次通知時才檢查登入狀態，老師登出後同一條連線不再收到 `monitor`。學生連線（`studentId`）與未帶參數的公開連線都不會收到 `monitor`。
 
 ## 作答作廢
 
@@ -842,11 +846,12 @@ server 內部的作答紀錄與每題判定結果（含作廢與公平順位）�
 ```json
 {
   "data": {
+    "fairRankingEnabled": false,
     "questions": [
       {
         "questionId": 1,
         "blanks": [{ "index": 0, "prefix": "", "prompt": "第 1 題" }],
-        "winner": { "groupName": "第 2 組", "answers": ["H2O"] },
+        "winner": { "groupName": "第 2 組", "answers": ["H2O"], "byFairRanking": false },
         "own": { "place": 2, "isWinner": false, "answers": ["水"] }
       }
     ]
@@ -854,7 +859,7 @@ server 內部的作答紀錄與每題判定結果（含作廢與公平順位）�
 }
 ```
 
-`winner` 為該題最先有效提交的組別名稱與答案；無有效作答時為 `null`。`own` 為學生所屬組別的名次、是否成功與答案；本組沒有有效作答時為 `null`。本組是勝者時，`own.isWinner` 為 `true`。結果不含任何組別識別碼、任何 `rank` 欄位、他組（勝者除外）的名次或答案，也不含 `placings`、`settled`、`winnerSource`、題目層 `prompt` 或儲存格位置。`own.place` 是活動結束後才公開的顯示名次（先到先得時依接收順序），內部的 `rank` 欄位不公開。準備中與搶答中不得讀取結果。
+`fairRankingEnabled` 為本場是否啟用公平順位。`winner` 為該題勝者的組別名稱與答案（未啟用公平順位時為最先有效提交者），`winner.byFairRanking` 表示勝者是否因公平順位改判；無有效作答時 `winner` 為 `null`。`own` 為學生所屬組別的名次、是否成功與答案；本組沒有有效作答時為 `null`。本組是勝者時，`own.isWinner` 為 `true`。結果不含任何組別識別碼、任何 `rank` 欄位、他組（勝者除外）的名次或答案，也不含 `placings`、`settled`、`winnerSource`、題目層 `prompt` 或儲存格位置。`own.place` 是活動結束後才公開的顯示名次（先到先得時依接收順序，啟用公平順位時依公平順位判定後的名次），內部的 `rank` 欄位不公開。準備中與搶答中不得讀取結果。
 
 ### 學生結果錯誤狀態
 

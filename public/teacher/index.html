@@ -55,6 +55,10 @@
     .countdown-setup { margin-top: 12px; }
     .countdown-setup .check { display: flex; align-items: center; gap: 8px; margin: 0; }
     .countdown-setup .check input { width: 22px; min-height: 22px; }
+    .fair-ranking-setup { margin-top: 12px; }
+    .fair-ranking-setup .check { display: flex; align-items: center; gap: 8px; margin: 0; }
+    .fair-ranking-setup .check input { width: 22px; min-height: 22px; }
+    .fair-ranking-setup .hint { margin: 4px 0 0; font-size: 0.9rem; color: #5a6680; line-height: 1.5; }
     .countdown-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .countdown-fields label { margin-bottom: 4px; }
     #countdown-remaining { font-variant-numeric: tabular-nums; }
@@ -91,6 +95,7 @@
           <dt>階段</dt><dd id="summary-phase" aria-live="polite">讀取中…</dd>
           <dt>組別與題目</dt><dd id="summary-counts"></dd>
           <dt id="countdown-label" hidden>倒數</dt><dd id="countdown-remaining" aria-live="off" hidden></dd>
+          <dt id="fair-ranking-label" hidden>公平順位</dt><dd id="fair-ranking-state" hidden></dd>
         </dl>
         <div class="countdown-setup">
           <label class="check"><input id="countdown-enabled" type="checkbox"> 設定倒數（10 秒到 60 分鐘，時間到自動結束）</label>
@@ -104,6 +109,10 @@
               <input id="countdown-seconds" type="number" inputmode="numeric" min="0" max="59" step="1" value="0">
             </div>
           </div>
+        </div>
+        <div class="fair-ranking-setup">
+          <label class="check"><input id="fair-ranking" type="checkbox" aria-describedby="fair-ranking-rule"> 啟用公平順位</label>
+          <p id="fair-ranking-rule" class="hint">某題第一個答案送達後 3 秒內送達的組別視為同一批，同批中已搶答成功題數較少的組別優先，相同再比送達順序。開始後不能變更。</p>
         </div>
         <button id="start" type="button">開始搶答</button>
         <button id="end" type="button" class="danger">結束搶答</button>

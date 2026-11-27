@@ -109,12 +109,12 @@ test('student results share winners while returning each group own result only',
     assert.deepEqual(firstResults, sameGroupResults);
 
     assert.deepEqual(firstResults[0].winner, secondResults[0].winner);
-    assert.deepEqual(firstResults[0].winner, { groupName: '第 1 組', answers: ['group one wins'] });
+    assert.deepEqual(firstResults[0].winner, { groupName: '第 1 組', answers: ['group one wins'], byFairRanking: false });
     assert.deepEqual(firstResults[0].own, { place: 1, isWinner: true, answers: ['group one wins'] });
     assert.deepEqual(secondResults[0].own, { place: 2, isWinner: false, answers: ['group two private losing answer'] });
 
     assert.equal(firstResults[1].own, null);
-    assert.deepEqual(firstResults[1].winner, { groupName: '第 2 組', answers: ['group two wins only here'] });
+    assert.deepEqual(firstResults[1].winner, { groupName: '第 2 組', answers: ['group two wins only here'], byFairRanking: false });
     assert.equal(firstResults[2].winner, null);
     assert.equal(firstResults[2].own, null);
     assert.deepEqual(firstResults[9].winner.answers, ['first blank', 'second blank']);

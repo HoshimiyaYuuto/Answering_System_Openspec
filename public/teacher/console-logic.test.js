@@ -5,6 +5,7 @@ import {
   COUNTDOWN_RANGE_MESSAGE,
   createConsoleState,
   describeAction,
+  describeFairRanking,
   describeSummary,
   formatRemaining,
   getConsoleControls,
@@ -222,4 +223,22 @@ test('formatRemaining uses the given server time, rounds up and never goes below
   assert.equal(formatRemaining(endsAt, at('2026-11-26T01:05:00.000Z')), '0:00');
   assert.equal(formatRemaining('2026-11-26T02:00:00.000Z', at('2026-11-26T01:00:00.000Z')), '60:00');
   assert.equal(formatRemaining(null, at('2026-11-26T01:00:00.000Z')), '');
+});
+
+test('fair ranking checkbox is editable only while preparing and idle', () => {
+  assert.equal(getConsoleControls(consoleIn('準備中')).canEditFairRanking, true);
+  assert.equal(getConsoleControls(consoleIn('搶答中')).canEditFairRanking, false);
+  assert.equal(getConsoleControls(consoleIn('已結束')).canEditFairRanking, false);
+  const starting = reduceConsole(consoleIn('準備中'), { type: 'requestStart' });
+  assert.equal(getConsoleControls(starting).canEditFairRanking, false);
+});
+
+test('describeFairRanking hides before starting and shows the setting afterwards', () => {
+  assert.equal(describeFairRanking(null), '');
+  assert.equal(describeFairRanking(undefined), '');
+  assert.equal(describeFairRanking({ ...summary('準備中'), fairRankingEnabled: true }), '');
+  assert.equal(describeFairRanking({ ...summary('搶答中'), fairRankingEnabled: true }), '啟用');
+  assert.equal(describeFairRanking({ ...summary('搶答中'), fairRankingEnabled: false }), '不啟用');
+  assert.equal(describeFairRanking({ ...summary('已結束'), fairRankingEnabled: true }), '啟用');
+  assert.equal(describeFairRanking({ ...summary('已結束'), fairRankingEnabled: false }), '不啟用');
 });
