@@ -196,13 +196,32 @@ export function createApplication({
   }
 
   // 老師連線只收到「監看資料已改變」，內容不含作答；每次通知時才檢查 token，登出後就不再通知
-  function notifyTeachers() {
+  function notifyTeachers(eventName = 'monitor') {
     const notice = JSON.stringify({ serverTime: new Date(currentTime()).toISOString() });
     for (const client of eventClients) {
       if (client.teacherToken && teacherAuth.isValid(client.teacherToken)) {
-        safeWrite(client.response, `event: monitor\ndata: ${notice}\n\n`);
+        safeWrite(client.response, `event: ${eventName}\ndata: ${notice}\n\n`);
       }
     }
+  }
+
+  // 在線狀態即時由學生連線推算，不另外存（add-projector-board design 第 1 節）
+  function groupPresence() {
+    const onlineIds = new Set();
+    for (const client of eventClients) {
+      if (!client.studentId) continue;
+      const entry = session.groups.lookup(client.studentId, session.phase);
+      if (entry.data?.valid) onlineIds.add(entry.data.group.id);
+    }
+    return session.groups.list()
+      .slice()
+      .sort((left, right) => left.id - right.id)
+      .map(({ id, name }) => ({ id, name, online: onlineIds.has(id) }));
+  }
+
+  // 只通知已登入老師「在線狀態已改變」，內容只有 server 時間（design 第 2 節）
+  function notifyPresence() {
+    notifyTeachers('presence');
   }
 
   function clearBatchNotice() {
@@ -303,6 +322,7 @@ data: ${payload}
     }
     try {
       const result = operation();
+      notifyPresence();
       return response.json({ data: { groups: result } });
     } catch (error) {
       if (error instanceof InvalidGroupsError) {
@@ -315,12 +335,17 @@ data: ${payload}
   app.put('/api/groups', requireTeacher, (request, response) => configureGroups(request, response, () => session.groups.replace(request.body?.groups)));
   app.post('/api/groups/generate', requireTeacher, (request, response) => configureGroups(request, response, () => session.groups.generate(request.body?.count)));
 
+  app.get('/api/teacher/presence', requireTeacher, (_request, response) => {
+    response.json({ data: { groups: groupPresence(), serverTime: new Date(currentTime()).toISOString() } });
+  });
+
   app.put('/api/student/entry', (request, response) => {
     const result = session.groups.enter(request.body?.studentId, request.body?.groupId, session.phase);
     if (result.error) {
       const { status, ...error } = result.error;
       return response.status(status).json({ error });
     }
+    notifyPresence();
     response.json({ data: result.data });
   });
 
@@ -664,13 +689,15 @@ data: ${payload}
       ...(asTeacher ? { teacherToken: readCookie(request, TEACHER_COOKIE) } : {}),
     };
     eventClients.add(client);
+    if (client.studentId) notifyPresence();
 
     const heartbeat = setInterval(() => {
       safeWrite(response, `event: heartbeat\ndata: ${JSON.stringify({ serverTime: new Date().toISOString() })}\n\n`);
     }, 15_000);
     response.on('close', () => {
       clearInterval(heartbeat);
-      eventClients.delete(client);
+      const wasConnected = eventClients.delete(client);
+      if (client.studentId && wasConnected) notifyPresence();
     });
   });
 
@@ -754,6 +781,7 @@ data: ${payload}
       client.response.end();
     }
     publishPhase();
+    notifyPresence();
     response.json({ data: { phase: session.phase, serverTime: new Date(currentTime()).toISOString() } });
   });
 

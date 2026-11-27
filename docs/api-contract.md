@@ -47,7 +47,7 @@
 
 老師以環境變數 `TEACHER_PASSWORD` 設定的密碼登入。登入狀態存在 HttpOnly cookie，瀏覽器會自動附在之後的請求上，頁面 JavaScript 讀不到。以下標示「需老師登入」的端點，未登入時一律回 `401 TEACHER_AUTH_REQUIRED`，且檢查順序為登入 → 階段 → 請求內容。是否需要登入與請求來源無關：localhost 未登入也會被拒絕，區網裝置登入後也能操作；server 不採信 `X-Forwarded-For` 等轉發標頭。
 
-需老師登入的端點：`PUT /api/groups`、`POST /api/groups/generate`、`POST /api/session/start`、`POST /api/session/end`、`POST /api/session/reset`，以及「Guided Notes 匯入」一節的四個端點。學生端點、`GET /api/session`、`GET /api/groups`、`GET /api/events` 不需登入。
+需老師登入的端點：`PUT /api/groups`、`POST /api/groups/generate`、`POST /api/session/start`、`POST /api/session/end`、`POST /api/session/reset`、`GET /api/teacher/presence`，以及「Guided Notes 匯入」一節的四個端點。學生端點、`GET /api/session`、`GET /api/groups`、`GET /api/events` 不需登入。
 
 登入狀態維持到登出、關閉瀏覽器或 server 重新啟動為止。回應內容不包含密碼或 token。
 
@@ -726,6 +726,43 @@ data: {"serverTime":"2026-11-14T00:00:00.000Z"}
 ```
 
 事件只表示「監看資料已改變」，不含作答內容，老師端收到後重新呼叫 `GET /api/teacher/monitor`。老師作廢作答成功後也會送出同一個通知（見「作答作廢」）。啟用公平順位且在搶答中時，某題的 3 秒批次結束後 2 秒內也會送出同一個通知，即使期間沒有新的送出，讓「判定中」的題目更新為最終名次；未啟用時不會有這種通知。每次通知時才檢查登入狀態，老師登出後同一條連線不再收到 `monitor`。學生連線（`studentId`）與未帶參數的公開連線都不會收到 `monitor`。
+
+## 各組在線狀態
+
+供投影看板顯示各組是否在線（共同契約 D16）。某組至少有一位**有效進場**學生的事件連線（`/api/events?studentId=...`）開著時，該組為在線。在線狀態每次即時由目前的連線推算，不另外儲存；換組、組別被刪除、重設活動都會立即反映。
+
+### `GET /api/teacher/presence`
+
+需老師登入，未登入回 `401 TEACHER_AUTH_REQUIRED`。成功回 `200`，組別依編號排序：
+
+```json
+{
+  "data": {
+    "groups": [
+      { "id": 1, "name": "第 1 組", "online": true },
+      { "id": 2, "name": "第 2 組", "online": false }
+    ],
+    "serverTime": "2026-11-14T00:00:00.000Z"
+  }
+}
+```
+
+### `GET /api/events?role=teacher` 的在線通知
+
+以下情況發生後，已登入老師的連線會收到：
+
+```text
+event: presence
+data: {"serverTime":"2026-11-14T00:00:00.000Z"}
+
+```
+
+- 學生事件連線開啟或關閉；
+- `PUT /api/student/entry` 成功（進場或換組）；
+- `PUT /api/groups`、`POST /api/groups/generate` 成功；
+- `POST /api/session/reset` 成功。
+
+事件只表示「在線狀態已改變」，不含組別或作答資料，收到後重新呼叫 `GET /api/teacher/presence`。和 `monitor` 一樣每次通知時檢查登入狀態。學生連線與公開連線都不會收到 `presence`，`GET /api/session` 與 `phase` 事件也不含任何在線資訊。
 
 ## 作答作廢
 
