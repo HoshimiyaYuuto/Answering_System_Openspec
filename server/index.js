@@ -84,6 +84,13 @@ export function createApplication({
   logger = console,
   now,
   submissions = createSubmissions(now ? { now: () => new Date(now()) } : {}),
+  // 倒數計時器可由測試注入（add-countdown-and-reset design 第 1 節）
+  scheduleTimeout = (callback, milliseconds) => {
+    const timer = setTimeout(callback, milliseconds);
+    timer.unref?.();
+    return timer;
+  },
+  cancelTimeout = (timer) => clearTimeout(timer),
 } = {}) {
   const app = express();
   const publicRoot = resolve('public');
@@ -104,7 +111,9 @@ export function createApplication({
       : [{ index: 0, prefix: '', prompt: `第 ${id} 題` }];
     return { id, prompt: blanks.map(({ prefix, prompt }) => `${prefix}${prompt}`).join(''), blanks };
   }) : [];
-  const session = { phase: '準備中', activityId: null, questions: developmentQuestions, groups };
+  const session = { phase: '準備中', activityId: null, countdownEndsAt: null, questions: developmentQuestions, groups };
+  let countdownTimer = null;
+  const currentTime = () => (now ? now() : Date.now());
   const guidedNotes = createGuidedNotesImport();
   const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
   const eventClients = new Set();
@@ -151,13 +160,33 @@ export function createApplication({
       activityId: session.activityId,
       questionCount: session.questions.length,
       groupCount: session.groups.count(),
-      serverTime: new Date().toISOString(),
+      countdownEndsAt: session.countdownEndsAt,
+      serverTime: new Date(currentTime()).toISOString(),
     };
   }
 
   function publishPhase() {
-    const payload = JSON.stringify({ phase: session.phase, serverTime: new Date().toISOString() });
+    const payload = JSON.stringify({
+      phase: session.phase,
+      countdownEndsAt: session.countdownEndsAt,
+      serverTime: new Date(currentTime()).toISOString(),
+    });
     for (const client of eventClients) safeWrite(client.response, `event: phase\ndata: ${payload}\n\n`);
+  }
+
+  function clearCountdown() {
+    if (countdownTimer !== null) cancelTimeout(countdownTimer);
+    countdownTimer = null;
+    session.countdownEndsAt = null;
+  }
+
+  // 老師結束與倒數歸零共用；不在搶答中時不動作，所以只會結束一次
+  function endSession() {
+    if (session.phase !== '搶答中') return false;
+    clearCountdown();
+    session.phase = '已結束';
+    publishPhase();
+    return true;
   }
 
   function safeWrite(response, chunk) {
@@ -592,7 +621,7 @@ data: ${notice}
     });
   });
 
-  app.post('/api/session/start', requireTeacher, (_request, response) => {
+  app.post('/api/session/start', requireTeacher, (request, response) => {
     if (session.phase !== '準備中') {
       return response.status(409).json({
         error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能開啟搶答。' },
@@ -604,21 +633,58 @@ data: ${notice}
     if (session.questions.length === 0) {
       return response.status(409).json({ error: { code: 'QUESTIONS_REQUIRED', message: '請先匯入學習單。' } });
     }
-    session.activityId = randomUUID();
+    const countdownSeconds = request.body?.countdownSeconds;
+    const hasCountdown = countdownSeconds !== undefined && countdownSeconds !== null;
+    if (hasCountdown && !(Number.isInteger(countdownSeconds) && countdownSeconds >= 10 && countdownSeconds <= 3600)) {
+      return response.status(400).json({
+        error: { code: 'COUNTDOWN_OUT_OF_RANGE', message: '倒數時間需介於 10 秒到 60 分鐘。' },
+      });
+    }
+    clearCountdown();
+    const activityId = randomUUID();
+    session.activityId = activityId;
     session.phase = '搶答中';
+    if (hasCountdown) {
+      session.countdownEndsAt = new Date(currentTime() + countdownSeconds * 1000).toISOString();
+      countdownTimer = scheduleTimeout(() => {
+        countdownTimer = null;
+        if (session.activityId === activityId) endSession();
+      }, countdownSeconds * 1000);
+    }
     publishPhase();
-    response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
+    response.json({ data: { phase: session.phase, countdownEndsAt: session.countdownEndsAt, serverTime: new Date(currentTime()).toISOString() } });
   });
 
   app.post('/api/session/end', requireTeacher, (_request, response) => {
-    if (session.phase !== '搶答中') {
+    if (!endSession()) {
       return response.status(409).json({
         error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能結束搶答。' },
       });
     }
-    session.phase = '已結束';
+    response.json({ data: { phase: session.phase, serverTime: new Date(currentTime()).toISOString() } });
+  });
+
+  // 已結束後重設回準備中：清空作答與進場，保留組別、題目與老師登入（add-countdown-and-reset design 第 3、5 節）
+  app.post('/api/session/reset', requireTeacher, (_request, response) => {
+    if (session.phase !== '已結束') {
+      return response.status(409).json({
+        error: { code: 'INVALID_PHASE_TRANSITION', message: '只能在已結束時重設活動。' },
+      });
+    }
+    submissions.clear();
+    session.groups.resetEntries();
+    session.activityId = null;
+    clearCountdown();
+    session.phase = '準備中';
+    const resetPayload = JSON.stringify({ serverTime: new Date(currentTime()).toISOString() });
+    for (const client of [...eventClients]) {
+      if (!client.studentId) continue;
+      safeWrite(client.response, `event: reset\ndata: ${resetPayload}\n\n`);
+      eventClients.delete(client);
+      client.response.end();
+    }
     publishPhase();
-    response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
+    response.json({ data: { phase: session.phase, serverTime: new Date(currentTime()).toISOString() } });
   });
 
   if (isDevelopment) {
@@ -632,6 +698,7 @@ data: ${notice}
       if (request.params.phase === '搶答中' && session.phase !== '搶答中') {
         session.activityId = randomUUID();
       }
+      if (request.params.phase !== '搶答中') clearCountdown();
       session.phase = request.params.phase;
       publishPhase();
       response.json({ data: sessionSummary() });

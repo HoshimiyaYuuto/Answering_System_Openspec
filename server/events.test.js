@@ -79,7 +79,7 @@ test('development phase change emits the documented phase event promptly', async
     }
     const eventBlock = buffer.slice(0, buffer.indexOf('\n\n'));
     assert.ok(Date.now() - startedAt < 2_000, 'phase event must arrive within two seconds');
-    assert.match(eventBlock, /^event: phase\ndata: \{"phase":"搶答中","serverTime":"[^"\n]+"\}$/);
+    assert.match(eventBlock, /^event: phase\ndata: \{"phase":"搶答中","countdownEndsAt":null,"serverTime":"[^"\n]+"\}$/);
     assert.ok(Number.isFinite(Date.parse(JSON.parse(eventBlock.split('\n')[1].slice(6)).serverTime)));
   } finally {
     await reader.cancel();

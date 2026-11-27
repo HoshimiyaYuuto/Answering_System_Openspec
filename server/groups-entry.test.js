@@ -306,3 +306,34 @@ test('student and teacher static entry points serve HTML and root redirects to s
     await new Promise((resolve) => server.close(resolve));
   }
 });
+test('resetEntries reports activity_reset for students who entered before the reset', () => {
+  const store = createGroupsEntry({ seed: [{ id: 1, name: '一組' }, { id: 2, name: '二組' }] });
+  assert.equal(store.enter('student-aaaa', 1, '搶答中').data.valid, true);
+  assert.equal(store.enter('student-bbbb', 2, '搶答中').data.valid, true);
+  store.resetEntries();
+  assert.deepEqual(store.lookup('student-aaaa', '準備中').data, { valid: false, studentId: 'student-aaaa', reason: 'activity_reset' });
+  assert.equal(store.lookup('student-bbbb', '準備中').data.reason, 'activity_reset');
+  assert.equal(store.lookup('student-never', '準備中').data.reason, 'entry_reset');
+  assert.deepEqual(store.list(), [{ id: 1, name: '一組' }, { id: 2, name: '二組' }]);
+});
+
+test('re-entering after a reset clears the activity_reset reason', () => {
+  const store = createGroupsEntry({ seed: [{ id: 1, name: '一組' }, { id: 2, name: '二組' }] });
+  store.enter('student-aaaa', 1, '已結束');
+  store.resetEntries();
+  const entered = store.enter('student-aaaa', 2, '準備中');
+  assert.equal(entered.data.valid, true);
+  assert.equal(store.lookup('student-aaaa', '準備中').data.group.id, 2);
+  store.resetEntries();
+  store.enter('student-aaaa', 1, '準備中');
+  assert.equal(store.lookup('student-aaaa', '準備中').data.valid, true);
+});
+
+test('an entry whose group was removed also reports activity_reset after a reset', () => {
+  const store = createGroupsEntry({ seed: [{ id: 1, name: '一組' }, { id: 2, name: '二組' }] });
+  store.enter('student-aaaa', 2, '準備中');
+  store.replace([{ id: 1, name: '一組' }]);
+  assert.equal(store.lookup('student-aaaa', '準備中').data.reason, 'group_removed');
+  store.resetEntries();
+  assert.equal(store.lookup('student-aaaa', '準備中').data.reason, 'activity_reset');
+});
