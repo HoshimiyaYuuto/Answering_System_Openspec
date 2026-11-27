@@ -173,7 +173,7 @@ test('builds result rows, own win summary, and sorted question labels', () => {
 });
 
 test('buildResultsRows returns an empty summary for null or empty input', () => {
-  const empty = { summary: { ownWins: 0, total: 0, text: '本組成功 0 題／共 0 題' }, rows: [] };
+  const empty = { summary: { ownWins: 0, total: 0, text: '本組成功 0 題／共 0 題' }, fairRankingNotice: '', rows: [] };
   assert.deepEqual(buildResultsRows(null), empty);
   assert.deepEqual(buildResultsRows({}), empty);
   assert.deepEqual(buildResultsRows({ questions: [] }), empty);
@@ -290,4 +290,63 @@ test('a device clock two minutes slow gives the same remaining time once the off
   const clockOffset = serverNow - deviceNow;
   assert.equal(formatRemaining(endsAt, deviceNow + clockOffset), formatRemaining(endsAt, serverNow));
   assert.equal(formatRemaining(endsAt, deviceNow + clockOffset), '0:30');
+});
+
+// add-student-fair-ranking-notice 1.1
+const fairRankingResults = (overrides = {}) => ({
+  fairRankingEnabled: true,
+  questions: [
+    {
+      questionId: 1,
+      blanks: [{ index: 0, prefix: '', prompt: '題目一' }],
+      winner: { groupName: '第 1 組', answers: ['H2O'], byFairRanking: false },
+      own: { place: 1, isWinner: true, answers: ['H2O'] },
+    },
+    {
+      questionId: 3,
+      blanks: [{ index: 0, prefix: '', prompt: '題目三' }],
+      winner: { groupName: '第 2 組', answers: ['牛頓'], byFairRanking: true },
+      own: { place: 2, isWinner: false, answers: ['伽利略'] },
+    },
+  ],
+  ...overrides,
+});
+
+test('fair ranking results show the session notice and mark re-judged questions', () => {
+  const result = buildResultsRows(fairRankingResults());
+  assert.equal(result.fairRankingNotice, '本場使用公平順位');
+  assert.equal(result.rows[0].winnerText, '第 1 組：H2O');
+  assert.equal(result.rows[1].winnerText, '第 2 組：牛頓（本題因公平順位改判）');
+  assert.equal(result.rows[1].ownText, '本組第 2 名：伽利略');
+  assert.equal(result.rows[1].isOwnWinner, false);
+});
+
+test('fair ranking disabled shows no notice or marks', () => {
+  const disabled = fairRankingResults({ fairRankingEnabled: false });
+  disabled.questions[1].winner.byFairRanking = false;
+  const result = buildResultsRows(disabled);
+  assert.equal(result.fairRankingNotice, '');
+  assert.deepEqual(result.rows.map(({ winnerText }) => winnerText), ['第 1 組：H2O', '第 2 組：牛頓']);
+});
+
+test('missing or non-true fair ranking fields are treated as false', () => {
+  for (const value of [undefined, null, 'true', 1]) {
+    const input = fairRankingResults({ fairRankingEnabled: value });
+    for (const question of input.questions) {
+      if (value === undefined) delete question.winner.byFairRanking;
+      else question.winner.byFairRanking = value;
+    }
+    if (value === undefined) delete input.fairRankingEnabled;
+    const result = buildResultsRows(input);
+    assert.equal(result.fairRankingNotice, '', String(value));
+    assert.ok(result.rows.every(({ winnerText }) => !winnerText.includes('公平順位')), String(value));
+  }
+  assert.equal(buildResultsRows(null).fairRankingNotice, '');
+  assert.equal(buildResultsRows({}).fairRankingNotice, '');
+});
+
+test('re-judged answers stay plain text', () => {
+  const input = fairRankingResults();
+  input.questions[1].winner.answers = ['<b>x</b>'];
+  assert.equal(buildResultsRows(input).rows[1].winnerText, '第 2 組：<b>x</b>（本題因公平順位改判）');
 });

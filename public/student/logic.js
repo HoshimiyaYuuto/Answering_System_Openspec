@@ -187,6 +187,10 @@ export function formatAnswers(blanks, answers) {
   }).join('；');
 }
 
+export const FAIR_RANKING_NOTICE = '本場使用公平順位';
+export const FAIR_RANKING_REJUDGED = '（本題因公平順位改判）';
+
+// 公平順位說明只認 true；欄位缺少或其他值都視為未啟用、未改判（add-student-fair-ranking-notice design 第 1 節）
 export function buildResultsRows(results) {
   const questions = Array.isArray(results?.questions) ? results.questions : [];
   const orderedQuestions = [...questions].sort((left, right) => left.questionId - right.questionId);
@@ -198,7 +202,7 @@ export function buildResultsRows(results) {
       questionId: question.questionId,
       label: `第 ${question.questionId} 題`,
       winnerText: winner
-        ? `${winner.groupName}：${formatAnswers(question.blanks, winner.answers)}`
+        ? `${winner.groupName}：${formatAnswers(question.blanks, winner.answers)}${winner.byFairRanking === true ? FAIR_RANKING_REJUDGED : ''}`
         : '無人作答',
       ownText: own
         ? `本組第 ${own.place} 名${isOwnWinner ? '（成功）' : ''}：${formatAnswers(question.blanks, own.answers)}`
@@ -210,6 +214,7 @@ export function buildResultsRows(results) {
   const total = rows.length;
   return {
     summary: { ownWins, total, text: `本組成功 ${ownWins} 題／共 ${total} 題` },
+    fairRankingNotice: results?.fairRankingEnabled === true ? FAIR_RANKING_NOTICE : '',
     rows,
   };
 }

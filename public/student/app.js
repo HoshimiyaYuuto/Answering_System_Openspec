@@ -16,6 +16,7 @@ const retryQuestionsButton = document.querySelector('#retry-questions');
 const ended = document.querySelector('#ended');
 const resultsSection = document.querySelector('#results-section');
 const resultsSummary = document.querySelector('#results-summary');
+const resultsFairRanking = document.querySelector('#results-fair-ranking');
 const resultsList = document.querySelector('#results-list');
 const resultsLoadingMessage = document.querySelector('#results-loading');
 const resultsErrorMessage = document.querySelector('#results-error');
@@ -215,6 +216,8 @@ function clearResultsView() {
   resultsSection.hidden = true;
   resultsSummary.textContent = '';
   resultsSummary.hidden = true;
+  resultsFairRanking.textContent = '';
+  resultsFairRanking.hidden = true;
   resultsList.replaceChildren();
   resultsList.hidden = true;
   resultsLoadingMessage.hidden = true;
@@ -227,6 +230,8 @@ function renderStudentResults(results) {
   const view = buildResultsRows(results);
   resultsSummary.textContent = view.summary.text;
   resultsSummary.hidden = false;
+  resultsFairRanking.textContent = view.fairRankingNotice;
+  resultsFairRanking.hidden = view.fairRankingNotice === '';
   resultsList.replaceChildren();
   for (const row of view.rows) {
     const item = document.createElement('li');
@@ -288,7 +293,7 @@ async function loadStudentResults() {
     }
     if (!Array.isArray(body?.data?.questions)) throw new Error('伺服器回應格式錯誤。');
     if (isStaleRequest(requestId, resultsRequestId)) return;
-    renderStudentResults({ questions: body.data.questions });
+    renderStudentResults({ questions: body.data.questions, fairRankingEnabled: body.data.fairRankingEnabled });
   } catch (error) {
     if (isStaleRequest(requestId, resultsRequestId)) return;
     const next = getResultsLoadNextStep(Number.isInteger(error.status) ? error.status : null);
