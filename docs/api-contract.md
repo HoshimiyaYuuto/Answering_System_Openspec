@@ -4,7 +4,7 @@
 
 ## 契約狀態與已知限制
 
-- 本文件只記錄已實作的端點；尚未實作的功能（結果、作廢、匯出等）在各自的 change 中新增。學生端送出與組別即時事件已於「搶答送出」章節定義。
+- 本文件只記錄已實作的端點；尚未實作的功能在各自的 change 中新增。學生端送出與組別即時事件已於「搶答送出」章節定義。
 - 活動狀態存在 server 記憶體；server 重啟後組別、進場紀錄、已匯入的題目與老師登入狀態全部清空。
 - 老師身分驗證（共同契約 D18）以 `TEACHER_PASSWORD` 密碼登入實作（見「老師登入」），已取代原本的 loopback 限制；loopback 只剩開發路由 `/api/dev/phase/:phase` 使用。新增的老師端點一律使用同一個登入檢查。
 
@@ -486,24 +486,33 @@ Request：
   "data": {
     "submissions": [
       { "questionId": 1, "answers": ["H2O"], "submittedAt": "2026-11-14T00:00:00.000Z" }
+    ],
+    "voided": [
+      { "questionId": 2, "voidedAt": "2026-11-14T00:01:00.000Z" }
     ]
   }
 }
 ```
 
+- `submissions`：該組目前的有效作答，依題號排序。
+- `voided`：該組作答已被老師作廢、且尚未重送的題目，依題號排序（見「作答作廢」）；同題作廢多次時為最後一次的作廢時間。重送成功後該題改列在 `submissions`。沒有時為空陣列。
+
 ### `GET /api/events` 的組別作答事件
 
 可選擇帶 `studentId` query 參數。無參數時行為不變，只收到既有 `phase` 與 `heartbeat` 事件。帶參數時先依 `studentId` 格式與有效進場檢查；無效格式回 `400 INVALID_STUDENT_ID`，沒有有效進場回 `403 STUDENT_NOT_ENTERED`，並以標準錯誤 envelope 拒絕且不建立 SSE 連線。這種失敗回應不會讓 `EventSource` 自動重連。
 
-成功連線除既有事件外，只會收到該組的 `submission` 事件：
+成功連線除既有事件外，只會收到該組的 `submission` 與 `void` 事件：
 
 ```text
 event: submission
 data: {"questionId":1,"answers":["H2O"],"submittedAt":"2026-11-14T00:00:00.000Z"}
 
+event: void
+data: {"questionId":1,"voidedAt":"2026-11-14T00:01:00.000Z"}
+
 ```
 
-事件內容不含順位。送出事件時依 `studentId` 目前有效進場狀態查詢組別。未帶 `studentId` 的連線、公開階段事件及 `GET /api/session` 均不含作答、提交數量或可推出他組狀況的資訊。
+`void` 表示該組該題的作答已被老師作廢，該組可重新送出（見「作答作廢」）。兩種事件內容都不含順位。送出事件時依 `studentId` 目前有效進場狀態查詢組別。未帶 `studentId` 的連線、公開階段事件及 `GET /api/session` 均不含作答、提交數量或可推出他組狀況的資訊。
 
 ### 搶答送出錯誤狀態
 
@@ -516,7 +525,7 @@ data: {"questionId":1,"answers":["H2O"],"submittedAt":"2026-11-14T00:00:00.000Z"
 | 409 | `SUBMISSION_NOT_ALLOWED` | 非搶答中階段提交答案 |
 | 404 | `QUESTION_NOT_FOUND` | 提交的題目不存在 |
 | 400 | `INVALID_ANSWER` | 答案陣列、空格數或答案內容不符規則 |
-| 409 | `ALREADY_SUBMITTED` | 該組該題已有有效作答 |
+| 409 | `ALREADY_SUBMITTED` | 該組該題目前已有有效作答（被老師作廢後可重送） |
 
 ### PowerShell 範例
 
@@ -669,7 +678,63 @@ data: {"serverTime":"2026-11-14T00:00:00.000Z"}
 
 ```
 
-事件只表示「監看資料已改變」，不含作答內容，老師端收到後重新呼叫 `GET /api/teacher/monitor`。每次送出時才檢查登入狀態，老師登出後同一條連線不再收到 `monitor`。學生連線（`studentId`）與未帶參數的公開連線都不會收到 `monitor`。
+事件只表示「監看資料已改變」，不含作答內容，老師端收到後重新呼叫 `GET /api/teacher/monitor`。老師作廢作答成功後也會送出同一個通知（見「作答作廢」）。每次通知時才檢查登入狀態，老師登出後同一條連線不再收到 `monitor`。學生連線（`studentId`）與未帶參數的公開連線都不會收到 `monitor`。
+
+## 作答作廢
+
+共同契約 D24。作答紀錄的狀態規則見 [作答紀錄與判定結果](submission-record.md) 第 1 節。
+
+### `POST /api/teacher/submissions/void`
+
+需老師登入。作廢指定題目中指定接收順位的作答：
+
+```json
+{ "questionId": 1, "rank": 1 }
+```
+
+`rank` 取自 `GET /api/teacher/monitor` 的 `entries[].rank`。以順位而不是組別指定，是為了避免老師連按兩次時誤作廢該組剛重送的作答。
+
+依序檢查：
+
+1. 未登入 → `401 TEACHER_AUTH_REQUIRED`
+2. `questionId` 或 `rank` 不是正整數 → `400 INVALID_VOID_REQUEST`
+3. 階段不是 `搶答中` → `409 VOID_NOT_ALLOWED`
+4. 題目不存在 → `404 QUESTION_NOT_FOUND`
+5. 該題沒有這個順位的作答 → `404 SUBMISSION_NOT_FOUND`
+6. 該筆作答已作廢 → `409 ALREADY_VOIDED`
+
+成功回 `200`：
+
+```json
+{ "data": { "questionId": 1, "groupId": 2, "rank": 1, "voidedAt": "2026-11-14T00:01:00.000Z" } }
+```
+
+成功後：
+
+- 該筆作答的 `status` 改為 `voided` 並記錄 `voidedAt`，紀錄保留，答案、送出時間與順位不變；監看中顯示為已作廢、沒有名次。
+- 已作廢的作答不計入搶答成功、`submittedCount`、判定結果、學生結果、結果 csv、xlsx 匯出與寫回。
+- 被作廢的組別可再次送出該題；重送是新的一筆，`rank` 為該題目前最大順位加 1，其他組的順位不變，作廢的號碼不重用。
+- 2 秒內通知已登入老師的連線（`monitor`）與被作廢組別的學生連線（`void`）。其他組、公開連線與 `GET /api/session` 不會收到任何與作廢有關的資訊。
+
+被拒絕時不改變任何作答紀錄，也不發出事件。
+
+### 作答作廢錯誤狀態
+
+| HTTP | Code | 用途 |
+| --- | --- | --- |
+| 400 | `INVALID_VOID_REQUEST` | `questionId` 或 `rank` 不是正整數 |
+| 409 | `VOID_NOT_ALLOWED` | 非搶答中階段作廢 |
+| 404 | `QUESTION_NOT_FOUND` | 題目不存在 |
+| 404 | `SUBMISSION_NOT_FOUND` | 該題沒有指定順位的作答 |
+| 409 | `ALREADY_VOIDED` | 該筆作答已作廢 |
+
+### PowerShell 範例
+
+```powershell
+Invoke-RestMethod http://localhost:3000/api/teacher/monitor -WebSession $teacher | ConvertTo-Json -Depth 6
+Invoke-RestMethod -Method Post http://localhost:3000/api/teacher/submissions/void -ContentType 'application/json' -Body '{"questionId":1,"rank":1}' -WebSession $teacher
+Invoke-RestMethod "http://localhost:3000/api/student/submissions?studentId=stu-aaaa1111"
+```
 
 ## 結果 csv 匯出
 

@@ -93,7 +93,7 @@
 | export-guided-notes | 寫回 xlsx | P0 | 教師端成員 | 未開始（須依 D12 v0.6 改為 Google Sheets 寫回，見 O6） |
 | countdown | 倒數與自動結束 | P1 | 學生端成員（server 計時、學生端顯示）；教師端成員（老師設定） | 未開始 |
 | csv-export | 匯出活動結果 | P1 | 教師端成員 | 未開始（8 欄、本地時間） |
-| void-submission | D24 作廢 | P1 | 學生端成員（server）；教師端成員（操作畫面） | 未開始 |
+| void-submission | D24 作廢 | P1 | 教師端成員（server 與操作畫面，學生端成員無法開發時接手）；學生端頁面提示由 `add-student-void-notice` 處理 | 實作中（`add-submission-void`） |
 | challenge-override | O3 結束後改選 | P1 | 學生端成員（最終勝者資料模型）；教師端成員（操作畫面與匯出） | 不做（兩組決定） |
 | question-groups | 題組匯入與整題送出（D10） | P2 | 教師端成員（匯入）；學生端成員（送出與學生端） | 匯入端已含在 guided-notes-import；送出端未開始 |
 | fair-ranking | D14 公平順位 | P2 | 學生端成員 | 未開始（含 D25 連鎖重判） |

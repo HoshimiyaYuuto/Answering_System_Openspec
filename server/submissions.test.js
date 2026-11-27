@@ -130,3 +130,92 @@ test('keeps ranks consecutive across 100 groups and 50 questions', () => {
     assert.deepEqual(ranks, Array.from({ length: 100 }, (_, index) => index + 1));
   }
 });
+
+// ---- add-submission-void task 1.1 ----
+
+test('new submissions carry voidedAt null', () => {
+  const store = makeStore();
+  assert.equal(submit(store, 1, 1).submission.voidedAt, null);
+});
+
+test('voiding marks the record voided with a server timestamp and keeps it', () => {
+  const store = makeStore();
+  submit(store, 1, 2, ['甲']);
+  const result = store.voidSubmission({ questionId: 1, rank: 1 });
+  assert.equal(result.ok, true);
+  assert.equal(result.submission.status, 'voided');
+  assert.equal(result.submission.voidedAt, '2026-01-01T00:00:00.001Z');
+  const [record] = store.listSubmissions();
+  assert.deepEqual(
+    { ...record },
+    { questionId: 1, groupId: 2, answers: ['甲'], submittedAt: '2026-01-01T00:00:00.000Z', rank: 1, status: 'voided', voidedAt: '2026-01-01T00:00:00.001Z' },
+  );
+  assert.deepEqual(store.listByGroup(2), []);
+});
+
+test('the voided group resubmits after the current max rank; others stay locked', () => {
+  const store = makeStore();
+  submit(store, 1, 2);
+  submit(store, 1, 3);
+  submit(store, 1, 4);
+  assert.equal(store.voidSubmission({ questionId: 1, rank: 1 }).ok, true);
+  const again = submit(store, 1, 2, ['重送']);
+  assert.equal(again.ok, true);
+  assert.equal(again.submission.rank, 4);
+  assert.deepEqual(submit(store, 1, 3), { ok: false, code: 'ALREADY_SUBMITTED' });
+  assert.deepEqual(submit(store, 1, 2), { ok: false, code: 'ALREADY_SUBMITTED' });
+  assert.deepEqual(store.listSubmissions().map(({ groupId, rank, status }) => [groupId, rank, status]), [
+    [2, 1, 'voided'], [3, 2, 'valid'], [4, 3, 'valid'], [2, 4, 'valid'],
+  ]);
+});
+
+test('void rejects a missing rank and a record already voided', () => {
+  const store = makeStore();
+  submit(store, 1, 2);
+  assert.deepEqual(store.voidSubmission({ questionId: 1, rank: 9 }), { ok: false, code: 'SUBMISSION_NOT_FOUND' });
+  assert.deepEqual(store.voidSubmission({ questionId: 2, rank: 1 }), { ok: false, code: 'SUBMISSION_NOT_FOUND' });
+  store.voidSubmission({ questionId: 1, rank: 1 });
+  submit(store, 1, 2, ['重送']);
+  assert.deepEqual(store.voidSubmission({ questionId: 1, rank: 1 }), { ok: false, code: 'ALREADY_VOIDED' });
+  assert.equal(store.listByGroup(2)[0].rank, 2, 'resubmission is untouched by the repeated void');
+});
+
+test('void listeners are called once and a throwing listener does not undo the void', () => {
+  const store = makeStore();
+  const seen = [];
+  store.subscribeVoid(() => { throw new Error('boom'); });
+  store.subscribeVoid((submission) => seen.push(submission));
+  submit(store, 1, 2);
+  assert.equal(store.voidSubmission({ questionId: 1, rank: 1 }).ok, true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].status, 'voided');
+  assert.equal(store.listSubmissions()[0].status, 'voided');
+  assert.equal(store.voidSubmission({ questionId: 1, rank: 1 }).ok, false);
+  assert.equal(seen.length, 1, 'a rejected void notifies nobody');
+});
+
+test('pending voided questions are listed per group until resubmitted', () => {
+  const store = makeStore();
+  submit(store, 3, 2);
+  submit(store, 1, 2);
+  submit(store, 1, 5);
+  store.voidSubmission({ questionId: 3, rank: 1 });
+  store.voidSubmission({ questionId: 1, rank: 1 });
+  assert.deepEqual(store.listVoidedPendingByGroup(2).map(({ questionId }) => questionId), [1, 3]);
+  assert.deepEqual(store.listVoidedPendingByGroup(5), []);
+  submit(store, 1, 2, ['重送']);
+  assert.deepEqual(store.listVoidedPendingByGroup(2).map(({ questionId }) => questionId), [3]);
+  store.voidSubmission({ questionId: 1, rank: 3 });
+  const [latest] = store.listVoidedPendingByGroup(2);
+  assert.equal(latest.questionId, 1);
+  assert.equal(latest.voidedAt, store.listSubmissions().find(({ rank, questionId }) => questionId === 1 && rank === 3).voidedAt);
+});
+
+test('clear removes voided records and pending lists', () => {
+  const store = makeStore();
+  submit(store, 1, 2);
+  store.voidSubmission({ questionId: 1, rank: 1 });
+  store.clear();
+  assert.deepEqual(store.listSubmissions(), []);
+  assert.deepEqual(store.listVoidedPendingByGroup(2), []);
+});
