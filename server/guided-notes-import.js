@@ -140,6 +140,8 @@ function locateBlank(reader, header, row) {
 function readQuestions(reader, header) {
   const questions = [];
   const warnings = [];
+  // 與 warnings 一一對應的結構化提醒，供前端依語言組句（add-teacher-language-switch design 第 5 節）
+  const warningDetails = [];
   const seen = new Map();
   for (let row = header.row + 1; row <= reader.lastRow; row += 1) {
     const numberRange = reader.rangeAt(row, header.numberColumn);
@@ -157,6 +159,7 @@ function readQuestions(reader, header) {
       const index = blanks.length + 1;
       if (blank.existingContent) {
         warnings.push(`第 ${id} 題第 ${index} 格（${blank.answerCell}）已有內容，匯出時會被取代。`);
+        warningDetails.push({ code: 'ANSWER_CELL_NOT_EMPTY', questionId: id, blankIndex: index, cell: blank.answerCell });
       }
       blanks.push({
         index,
@@ -170,7 +173,7 @@ function readQuestions(reader, header) {
     questions.push({ id, prompt, blanks });
     row = numberRange.bottom;
   }
-  return { questions, warnings };
+  return { questions, warnings, warningDetails };
 }
 
 function isZip(buffer) {
@@ -195,9 +198,9 @@ export async function parseGuidedNotes(buffer) {
     const header = findHeader(reader);
     if (!header) continue;
     sawHeader = true;
-    const { questions, warnings } = readQuestions(reader, header);
+    const { questions, warnings, warningDetails } = readQuestions(reader, header);
     if (questions.length === 0) continue;
-    return { sheetName: worksheet.name, headerRow: header.row, questions, warnings };
+    return { sheetName: worksheet.name, headerRow: header.row, questions, warnings, warningDetails };
   }
   if (sawHeader) fail('IMPORT_NO_QUESTIONS', '找到「題號／題目／作答」表頭，但表頭下方沒有任何數字題號。');
   fail('IMPORT_NO_HEADER', '找不到同一列包含「題號」「題目」「作答」的表頭列，請確認欄位名稱後重新匯入。');
@@ -225,6 +228,7 @@ function summarize(entry) {
       prefixes: question.blanks.map((blank) => blank.prefix),
     })),
     warnings: [...entry.warnings],
+    warningDetails: (entry.warningDetails ?? []).map((detail) => ({ ...detail })),
   };
 }
 

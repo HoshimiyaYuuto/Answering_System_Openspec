@@ -112,6 +112,7 @@ test('existing non-prefix content in an answer cell produces a warning', async (
   assert.equal(parsed.questions[0].blanks[0].answerCell, 'C2');
   assert.equal(parsed.warnings.length, 1);
   assert.match(parsed.warnings[0], /第 1 題.*C2.*已有內容/);
+  assert.deepEqual(parsed.warningDetails, [{ code: 'ANSWER_CELL_NOT_EMPTY', questionId: 1, blankIndex: 1, cell: 'C2' }]);
 });
 
 // 2.3 錯誤
@@ -154,6 +155,7 @@ test('answer cell right of a prefix stays there even when it already has content
   ]);
   assert.equal(parsed.warnings.length, 1);
   assert.match(parsed.warnings[0], /第 1 題第 1 格（H5）已有內容，匯出時會被取代/);
+  assert.deepEqual(parsed.warningDetails, [{ code: 'ANSWER_CELL_NOT_EMPTY', questionId: 1, blankIndex: 1, cell: 'H5' }]);
 });
 
 test('linked imports keep the spreadsheet id as a write-back target outside the summary', async () => {
@@ -268,4 +270,27 @@ test('unshared, failing, oversized and slow links are reported', async () => {
   const slow = (_url, { signal }) =>
     new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason)));
   await rejectsWithCode(downloadGuidedNotes(link, { fetchImpl: slow, timeoutMs: 50 }), 'IMPORT_LINK_UNREACHABLE');
+});
+
+// add-teacher-language-switch task 1.1
+test('warning details follow the same order as the warning texts', async () => {
+  const buffer = await buildWorkbook(
+    [
+      ['題號', '題目', '作答', ''],
+      [1, '已有答案', '舊答案一', ''],
+      [2, '空白', '', ''],
+      [3, '也有答案', '舊答案三', ''],
+    ],
+    ['C1:D1', 'C2:D2', 'C3:D3', 'C4:D4'],
+  );
+  const parsed = await parseGuidedNotes(buffer);
+  assert.equal(parsed.warnings.length, 2);
+  assert.deepEqual(parsed.warningDetails.map(({ questionId, cell }) => [questionId, cell]), [[1, 'C2'], [3, 'C4']]);
+  assert.match(parsed.warnings[1], /第 3 題第 1 格（C4）/);
+});
+
+test('a worksheet without warnings has empty warnings and details', async () => {
+  const parsed = await parseGuidedNotes(await fixture('01-official-single.xlsx'));
+  assert.deepEqual(parsed.warnings, []);
+  assert.deepEqual(parsed.warningDetails, []);
 });

@@ -1,3 +1,5 @@
+import { ZH } from './messages.js';
+
 const PREPARING = '準備中';
 
 export function createImportState({ current = null, phase = PREPARING } = {}) {
@@ -33,8 +35,8 @@ export function reduceImport(state, event) {
   }
 }
 
-export function getBlockedReason(state) {
-  if (state.phase !== PREPARING) return `目前階段為「${state.phase}」，只能在準備中匯入學習單。`;
+export function getBlockedReason(state, t = ZH) {
+  if (state.phase !== PREPARING) return t('import.blocked', { phase: t(`phase.${state.phase}`) });
   return '';
 }
 
@@ -49,26 +51,44 @@ export function getImportControls(state) {
   };
 }
 
-export function describeCurrent(current) {
-  if (!current) return '尚未匯入學習單。';
-  return `已匯入「${current.source.name}」：工作表「${current.sheetName}」，共 ${current.questionCount} 題、${current.blankCount} 個空格。`;
+export function describeCurrent(current, t = ZH) {
+  if (!current) return t('import.none');
+  return t('import.current', {
+    name: current.source.name,
+    sheet: current.sheetName,
+    questions: current.questionCount,
+    blanks: current.blankCount,
+  });
 }
 
-export function describePreview(preview) {
+export function describePreview(preview, t = ZH) {
   const lines = [
-    `來源：${preview.source.name}`,
-    `工作表：${preview.sheetName}（表頭在第 ${preview.headerRow} 列）`,
-    `共 ${preview.questionCount} 題、${preview.blankCount} 個空格`,
+    t('import.source', { name: preview.source.name }),
+    t('import.sheet', { sheet: preview.sheetName, row: preview.headerRow }),
+    t('import.counts', { questions: preview.questionCount, blanks: preview.blankCount }),
   ];
-  if (preview.replacesExisting) lines.push('確認後會取代目前的題目。');
+  if (preview.replacesExisting) lines.push(t('import.replaces'));
   return lines;
 }
 
-export function getSummaryRows(preview) {
+// 匯入提醒：繁中照舊顯示 server 原文；其他語言依 warningDetails 組句，
+// 不認得的代碼或舊回應沒有 details 時退回原文（add-teacher-language-switch design 第 5 節）
+export function describeWarnings(summary, t = ZH) {
+  const texts = Array.isArray(summary?.warnings) ? summary.warnings : [];
+  if (t.language === 'zh-TW') return [...texts];
+  const details = Array.isArray(summary?.warningDetails) ? summary.warningDetails : [];
+  return texts.map((text, index) => {
+    const detail = details[index];
+    const key = detail ? `import.warning.${detail.code}` : null;
+    return key && t.has(key) ? t(key, detail) : text;
+  });
+}
+
+export function getSummaryRows(preview, t = ZH) {
   return preview.questions.map((question) => ({
-    number: `第 ${question.id} 題`,
-    type: question.type === 'group' ? '題組' : '單題',
-    blanks: `${question.blankCount} 格`,
+    number: t('import.rowNumber', { id: question.id }),
+    type: question.type === 'group' ? t('import.typeGroup') : t('import.typeSingle'),
+    blanks: t('import.blankCount', { count: question.blankCount }),
     prefixes: question.prefixes.filter(Boolean).join(' ') || '—',
   }));
 }
