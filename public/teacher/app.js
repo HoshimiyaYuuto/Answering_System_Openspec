@@ -67,6 +67,7 @@ const passwordInput = document.querySelector('#password');
 const loginSubmit = document.querySelector('#login-submit');
 const loginMessage = document.querySelector('#login-message');
 const logoutButton = document.querySelector('#logout');
+const boardLink = document.querySelector('#board-link');
 const summaryPhase = document.querySelector('#summary-phase');
 const summaryCounts = document.querySelector('#summary-counts');
 const startButton = document.querySelector('#start');
@@ -126,6 +127,8 @@ function renderConsole() {
   loginView.hidden = consoleState.view !== 'login';
   consoleView.hidden = consoleState.view !== 'console';
   logoutButton.hidden = !controls.canLogout;
+  // 投影看板需要老師登入，只在控制台畫面顯示連結（add-projector-board design 第 4 節）
+  boardLink.hidden = consoleState.view !== 'console';
 
   loginSubmit.disabled = !controls.canLogin;
   passwordInput.disabled = !controls.canLogin;

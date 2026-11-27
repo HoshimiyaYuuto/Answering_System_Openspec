@@ -31,6 +31,8 @@ async function startApp() {
         if (split !== -1) {
           const block = buffer.slice(0, split);
           buffer = buffer.slice(split + 2);
+          // 在線通知（add-projector-board）另由 presence-api.test.js 驗證，這裡略過
+          if (block.startsWith('event: presence\n')) continue;
           return block;
         }
         if (closed) throw new Error('SSE stream closed');

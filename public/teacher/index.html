@@ -34,6 +34,7 @@
     th, td { padding: 8px 10px; border-bottom: 1px solid #dde3ee; text-align: left; white-space: nowrap; }
     th { background: #f4f7fb; }
     [hidden] { display: none !important; }
+    .board-link { display: inline-block; margin: 4px 0 8px; padding: 10px 14px; border-radius: 10px; color: #2357d8; background: #e8efff; font-weight: 750; text-decoration: none; }
     .summary-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 12px 0 0; }
     .summary-grid dt { color: #5a6680; font-weight: 700; }
     .summary-grid dd { margin: 0; font-weight: 800; }
@@ -91,6 +92,7 @@
     <div id="console-view" hidden>
       <section class="panel" aria-labelledby="session-title">
         <h2 id="session-title">活動狀態</h2>
+        <a id="board-link" class="board-link" href="/teacher/board.html" target="_blank" rel="noopener" hidden>開啟投影看板</a>
         <dl class="summary-grid">
           <dt>階段</dt><dd id="summary-phase" aria-live="polite">讀取中…</dd>
           <dt>組別與題目</dt><dd id="summary-counts"></dd>

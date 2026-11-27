@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101828">
+  <title>投影看板｜課堂搶答</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; color: #f4f7fb; background: #101828; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px 20px; min-height: 100vh; background: #101828; }
+    main { width: min(100%, 1280px); margin: 0 auto; }
+    .notice { padding: 24px; border-radius: 16px; background: #1d2939; font-size: 1.4rem; line-height: 1.6; }
+    .notice a { color: #9ec5ff; }
+    .top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px 32px; }
+    #phase { margin: 0; font-size: clamp(2.2rem, 6vw, 3.4rem); }
+    #countdown { margin: 0; font-size: clamp(2.6rem, 8vw, 4.6rem); font-weight: 800; font-variant-numeric: tabular-nums; color: #ffd166; }
+    #online-count { margin: 12px 0 0; font-size: 1.4rem; color: #c8d1e0; }
+    .groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 20px 0 0; padding: 0; list-style: none; }
+    .groups li { display: flex; justify-content: space-between; gap: 8px; padding: 12px 14px; border-radius: 12px; font-size: 1.25rem; background: #1d2939; border: 2px solid #344054; }
+    .groups li.online { background: #0b3d2b; border-color: #32d583; }
+    .groups .state { font-weight: 800; color: #98a2b3; }
+    .groups li.online .state { color: #6ce9a6; }
+    h2 { margin: 24px 0 8px; font-size: clamp(1.8rem, 4vw, 2.4rem); }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+    button { min-height: 56px; padding: 12px 24px; border: 0; border-radius: 12px; color: white; background: #2357d8; font: inherit; font-size: 1.3rem; font-weight: 750; cursor: pointer; }
+    button.secondary { background: #344054; }
+    button:disabled { opacity: .45; cursor: default; }
+    #revealed-count { margin: 0; font-size: 1.2rem; color: #c8d1e0; }
+    .results { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+    .results li { display: grid; grid-template-columns: 6.5em 1fr; gap: 12px; padding: 14px 16px; border-radius: 12px; background: #1d2939; font-size: clamp(1.3rem, 3vw, 1.7rem); line-height: 1.4; }
+    .results li.hidden-result .text { color: #667085; }
+    .results .label { font-weight: 800; }
+    .hint { color: #98a2b3; font-size: 1.2rem; }
+    .error { color: #fda29b; font-size: 1.2rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <p id="checking" class="notice">讀取中…</p>
+    <p id="login" class="notice" hidden><span id="login-message"></span>：<a href="/teacher/">前往教師控制台</a></p>
+
+    <div id="board" hidden>
+      <div class="top">
+        <h1 id="phase" aria-live="polite"></h1>
+        <p id="countdown" aria-live="off" hidden></p>
+      </div>
+
+      <section id="presence-section" aria-label="各組在線狀態" hidden>
+        <p id="online-count"></p>
+        <ul id="groups" class="groups"></ul>
+      </section>
+
+      <section id="results-section" aria-labelledby="results-title" hidden>
+        <h2 id="results-title">搶答結果</h2>
+        <div class="controls">
+          <button id="reveal-next" type="button">揭曉下一題</button>
+          <button id="reveal-all" type="button" class="secondary">全部揭曉</button>
+        </div>
+        <p id="revealed-count"></p>
+        <p id="results-loading" class="hint" hidden>正在讀取結果…</p>
+        <ol id="results" class="results"></ol>
+      </section>
+
+      <p id="board-error" class="error" role="status" hidden></p>
+    </div>
+  </main>
+  <script type="module" src="./board.js"></script>
+</body>
+</html>
