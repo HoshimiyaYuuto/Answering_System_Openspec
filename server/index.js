@@ -14,7 +14,7 @@ import {
 import { createTeacherAuth, TeacherAuthError } from './teacher-auth.js';
 import { createSubmissions } from './submissions.js';
 import { buildStudentResults } from './student-results.js';
-import { computeResults } from './results.js';
+import { computeResults, FAIR_BATCH_MS } from './results.js';
 import {
   buildAnswerWorkbook,
   buildCellWrites,
@@ -26,6 +26,8 @@ import { createSheetsClient, loadServiceAccount } from './google-sheets.js';
 import { buildMonitor } from './teacher-monitor.js';
 import { buildResultsCsv } from './results-csv.js';
 
+// 批次結束後稍等再通知，避免計時器提早一點觸發時仍是判定中
+const BATCH_NOTICE_DELAY_MS = 50;
 const TEACHER_COOKIE = 'teacher_session';
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -111,8 +113,9 @@ export function createApplication({
       : [{ index: 0, prefix: '', prompt: `第 ${id} 題` }];
     return { id, prompt: blanks.map(({ prefix, prompt }) => `${prefix}${prompt}`).join(''), blanks };
   }) : [];
-  const session = { phase: '準備中', activityId: null, countdownEndsAt: null, questions: developmentQuestions, groups };
+  const session = { phase: '準備中', activityId: null, countdownEndsAt: null, fairRankingEnabled: false, questions: developmentQuestions, groups };
   let countdownTimer = null;
+  let batchNoticeTimer = null;
   const currentTime = () => (now ? now() : Date.now());
   const guidedNotes = createGuidedNotesImport();
   const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
@@ -161,6 +164,7 @@ export function createApplication({
       questionCount: session.questions.length,
       groupCount: session.groups.count(),
       countdownEndsAt: session.countdownEndsAt,
+      fairRankingEnabled: session.fairRankingEnabled,
       serverTime: new Date(currentTime()).toISOString(),
     };
   }
@@ -169,6 +173,7 @@ export function createApplication({
     const payload = JSON.stringify({
       phase: session.phase,
       countdownEndsAt: session.countdownEndsAt,
+      fairRankingEnabled: session.fairRankingEnabled,
       serverTime: new Date(currentTime()).toISOString(),
     });
     for (const client of eventClients) safeWrite(client.response, `event: phase\ndata: ${payload}\n\n`);
@@ -180,10 +185,61 @@ export function createApplication({
     session.countdownEndsAt = null;
   }
 
+  // 所有判定結果的呼叫端共用：已結束時所有批次立即判定（add-fair-ranking design 第 2 節）
+  function judgeResults(all) {
+    return computeResults({
+      questions: session.questions,
+      submissions: all,
+      fairRankingEnabled: session.fairRankingEnabled,
+      now: session.phase === '已結束' ? Infinity : currentTime(),
+    });
+  }
+
+  // 老師連線只收到「監看資料已改變」，內容不含作答；每次通知時才檢查 token，登出後就不再通知
+  function notifyTeachers() {
+    const notice = JSON.stringify({ serverTime: new Date(currentTime()).toISOString() });
+    for (const client of eventClients) {
+      if (client.teacherToken && teacherAuth.isValid(client.teacherToken)) {
+        safeWrite(client.response, `event: monitor\ndata: ${notice}\n\n`);
+      }
+    }
+  }
+
+  function clearBatchNotice() {
+    if (batchNoticeTimer !== null) cancelTimeout(batchNoticeTimer);
+    batchNoticeTimer = null;
+  }
+
+  // 公平順位的 3 秒批次結束時通知老師；同時最多一個計時器（add-fair-ranking design 第 3 節）
+  function scheduleBatchNotice() {
+    clearBatchNotice();
+    if (!session.fairRankingEnabled || session.phase !== '搶答中') return;
+    const firstAt = new Map();
+    for (const submission of submissions.listSubmissions()) {
+      if (submission.status !== 'valid') continue;
+      const current = firstAt.get(submission.questionId);
+      if (!current || submission.rank < current.rank) firstAt.set(submission.questionId, submission);
+    }
+    const current = currentTime();
+    let next = Infinity;
+    for (const { submittedAt } of firstAt.values()) {
+      const closesAt = Date.parse(submittedAt) + FAIR_BATCH_MS;
+      if (closesAt > current && closesAt < next) next = closesAt;
+    }
+    if (next === Infinity) return;
+    batchNoticeTimer = scheduleTimeout(() => {
+      batchNoticeTimer = null;
+      if (session.phase !== '搶答中') return;
+      notifyTeachers();
+      scheduleBatchNotice();
+    }, next - current + BATCH_NOTICE_DELAY_MS);
+  }
+
   // 老師結束與倒數歸零共用；不在搶答中時不動作，所以只會結束一次
   function endSession() {
     if (session.phase !== '搶答中') return false;
     clearCountdown();
+    clearBatchNotice();
     session.phase = '已結束';
     publishPhase();
     return true;
@@ -210,13 +266,8 @@ export function createApplication({
         safeWrite(client.response, `event: submission\ndata: ${payload}\n\n`);
       }
     }
-    // 老師連線只收到「監看資料已改變」，內容不含作答；每次送出時才檢查 token，登出後就不再通知
-    const notice = JSON.stringify({ serverTime: new Date().toISOString() });
-    for (const client of eventClients) {
-      if (client.teacherToken && teacherAuth.isValid(client.teacherToken)) {
-        safeWrite(client.response, `event: monitor\ndata: ${notice}\n\n`);
-      }
-    }
+    notifyTeachers();
+    scheduleBatchNotice();
   });
 
   // 作廢只通知被作廢組別的學生連線（不含順位）與已登入老師的連線（D24，design 第 4 節）
@@ -232,15 +283,8 @@ data: ${payload}
 `);
       }
     }
-    const notice = JSON.stringify({ serverTime: new Date().toISOString() });
-    for (const client of eventClients) {
-      if (client.teacherToken && teacherAuth.isValid(client.teacherToken)) {
-        safeWrite(client.response, `event: monitor
-data: ${notice}
-
-`);
-      }
-    }
+    notifyTeachers();
+    scheduleBatchNotice();
   });
 
   app.get('/api/session', (_request, response) => {
@@ -352,9 +396,12 @@ data: ${notice}
     if (session.phase !== '已結束') {
       return response.status(409).json({ error: { code: 'RESULTS_NOT_AVAILABLE', message: '活動結束後才能讀取結果。' } });
     }
+    const all = submissions.listSubmissions();
     const results = buildStudentResults({
       questions: session.questions,
-      submissions: submissions.listSubmissions(),
+      submissions: all,
+      results: judgeResults(all),
+      fairRankingEnabled: session.fairRankingEnabled,
       groups: session.groups.list(),
       groupId: entry.group.id,
     });
@@ -382,7 +429,7 @@ data: ${notice}
 
   function currentWinners() {
     const all = submissions.listSubmissions();
-    return winningAnswers(computeResults({ questions: session.questions, submissions: all, now: Date.now() }), all);
+    return winningAnswers(judgeResults(all), all);
   }
 
   app.get('/api/teacher/guided-notes/export', requireTeacher, async (_request, response) => {
@@ -535,7 +582,7 @@ data: ${notice}
 
   app.get('/api/teacher/monitor', requireTeacher, (_request, response) => {
     const all = submissions.listSubmissions();
-    const results = computeResults({ questions: session.questions, submissions: all, now: Date.now() });
+    const results = judgeResults(all);
     response.json({
       data: buildMonitor({ phase: session.phase, questions: session.questions, groups: session.groups.list(), submissions: all, results }),
     });
@@ -571,8 +618,14 @@ data: ${notice}
       return sendExportError(response, 'EXPORT_NOT_ALLOWED', '活動結束後才能匯出。', 409);
     }
     const all = submissions.listSubmissions();
-    const results = computeResults({ questions: session.questions, submissions: all, now: Date.now() });
-    const csv = buildResultsCsv({ questions: session.questions, groups: session.groups.list(), submissions: all, results });
+    const results = judgeResults(all);
+    const csv = buildResultsCsv({
+      questions: session.questions,
+      groups: session.groups.list(),
+      submissions: all,
+      results,
+      fairRankingEnabled: session.fairRankingEnabled,
+    });
     const fileName = exportFileName(guidedNotes.currentSummary()?.source?.name, 'csv');
     response.set({
       'Content-Type': 'text/csv; charset=utf-8',
@@ -640,7 +693,15 @@ data: ${notice}
         error: { code: 'COUNTDOWN_OUT_OF_RANGE', message: '倒數時間需介於 10 秒到 60 分鐘。' },
       });
     }
+    const fairRankingEnabled = request.body?.fairRankingEnabled === undefined ? false : request.body.fairRankingEnabled;
+    if (typeof fairRankingEnabled !== 'boolean') {
+      return response.status(400).json({
+        error: { code: 'INVALID_FAIR_RANKING', message: '公平順位設定必須是是或否。' },
+      });
+    }
     clearCountdown();
+    clearBatchNotice();
+    session.fairRankingEnabled = fairRankingEnabled;
     const activityId = randomUUID();
     session.activityId = activityId;
     session.phase = '搶答中';
@@ -652,7 +713,14 @@ data: ${notice}
       }, countdownSeconds * 1000);
     }
     publishPhase();
-    response.json({ data: { phase: session.phase, countdownEndsAt: session.countdownEndsAt, serverTime: new Date(currentTime()).toISOString() } });
+    response.json({
+      data: {
+        phase: session.phase,
+        countdownEndsAt: session.countdownEndsAt,
+        fairRankingEnabled: session.fairRankingEnabled,
+        serverTime: new Date(currentTime()).toISOString(),
+      },
+    });
   });
 
   app.post('/api/session/end', requireTeacher, (_request, response) => {
@@ -675,6 +743,8 @@ data: ${notice}
     session.groups.resetEntries();
     session.activityId = null;
     clearCountdown();
+    clearBatchNotice();
+    session.fairRankingEnabled = false;
     session.phase = '準備中';
     const resetPayload = JSON.stringify({ serverTime: new Date(currentTime()).toISOString() });
     for (const client of [...eventClients]) {

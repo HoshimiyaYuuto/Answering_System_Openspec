@@ -49,11 +49,11 @@
 
 ```js
 computeResults({ questions, submissions, fairRankingEnabled, now })
-// submissions 為 listSubmissions() 的結果；now 為判定時刻（毫秒），用來判斷公平順位的 3 秒批次是否已結束
+// submissions 為 listSubmissions() 的結果；now 為判定時刻（毫秒），用來判斷公平順位的 3 秒批次是否已結束；省略時視為 Infinity（所有批次都已結束）
 // 依題號順序回傳每題的判定結果
 ```
 
-放在 `server/results.js`，為純函式，不碰 HTTP 與 `session`，所有輸入都由呼叫端傳入。由獨立的小 change `add-results-computation` 實作（教師端成員負責），第一版只支援先到先得與過濾作廢；公平順位之後以 change 加入，在那之前 `fairRankingEnabled` 為 `true` 時會丟出錯誤（`code` 為 `FAIR_RANKING_NOT_SUPPORTED`），不會忽略設定照先到先得回傳。老師改選（O3）不納入共同契約、兩組都不實作；程式仍保留 `overrides` 參數，傳入非空物件時丟出 `OVERRIDE_NOT_SUPPORTED`，呼叫端不要傳。`add-buzz-in-submission` 不包含它。
+放在 `server/results.js`，為純函式，不碰 HTTP 與 `session`，所有輸入都由呼叫端傳入。由獨立的小 change `add-results-computation` 實作（教師端成員負責），第一版只支援先到先得與過濾作廢；公平順位已由 `add-fair-ranking`（教師端成員接手）實作，原本的 `FAIR_RANKING_NOT_SUPPORTED` 錯誤已移除。server 以 `judgeResults()` 統一呼叫：搶答中傳入目前時間，活動已結束時傳入 `Infinity`，讓未過 3 秒的題目在結束時立即判定。老師改選（O3）不納入共同契約、兩組都不實作；程式仍保留 `overrides` 參數，傳入非空物件時丟出 `OVERRIDE_NOT_SUPPORTED`，呼叫端不要傳。`add-buzz-in-submission` 不包含它。
 
 ```js
 {
@@ -84,10 +84,10 @@ computeResults({ questions, submissions, fairRankingEnabled, now })
    - **判定中**（SpecKit 005 AC-005-08、FR-010）：`now` 小於「該題第一個有效作答的 `submittedAt` + 3000 毫秒」時，該題 `settled` 為 `false`、`winner` 為 `null`，`placings` 暫以 `rank` 排序；該題的結果不計入後面題目的成功題數。批次結束後同一份資料重新推導即為定案結果。
    - 勝者不是該題 `rank` 最小者時，`winnerSource` 為 `'fair'`。
    - 作廢後從頭重新推導，後面已判定的題目連鎖重算（D25）。
-4. 同一份作答資料、設定與 `now`，推導結果都相同；所有題目都已過批次時間後，結果不再隨 `now` 改變。
+4. 同一份作答資料、設定與 `now`，推導結果都相同；所有題目都已過批次時間後，結果不再隨 `now` 改變。`now` 省略或活動已結束（server 傳 `Infinity`）時，視為所有題目都已判定。
 5. 沒有有效作答的題目 `settled` 為 `true`、`winner` 為 `null`、`placings` 為空陣列。
 
-`fairRankingEnabled` 存在 `session` 上，只能在「準備中」設定，預設 `false`。
+`fairRankingEnabled` 存在 `session` 上，預設 `false`；由 `POST /api/session/start` 的 body 設定（只能在「準備中」開始時決定），重設活動後回到 `false`。見 [API 契約](api-contract.md)。
 
 ## 3. 各功能如何使用
 

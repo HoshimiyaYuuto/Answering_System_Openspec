@@ -67,7 +67,7 @@ try {
   const latencies = await Promise.all(connectedClients.map(async (client, index) => {
     const event = await client.nextBlock(2_000);
     const latencyMs = Date.now() - emittedAt;
-    assert.match(event, /^event: phase\ndata: \{"phase":"搶答中","countdownEndsAt":null,"serverTime":"[^"\n]+"\}$/);
+    assert.match(event, /^event: phase\ndata: \{"phase":"搶答中","countdownEndsAt":null,"fairRankingEnabled":false,"serverTime":"[^"\n]+"\}$/);
     return { client: index + 1, latencyMs };
   }));
 

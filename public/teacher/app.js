@@ -1,6 +1,7 @@
 import {
   createConsoleState,
   describeAction,
+  describeFairRanking,
   describeSummary,
   formatRemaining,
   getConsoleControls,
@@ -80,6 +81,9 @@ const countdownMinutes = document.querySelector('#countdown-minutes');
 const countdownSeconds = document.querySelector('#countdown-seconds');
 const countdownLabel = document.querySelector('#countdown-label');
 const countdownRemaining = document.querySelector('#countdown-remaining');
+const fairRanking = document.querySelector('#fair-ranking');
+const fairRankingLabel = document.querySelector('#fair-ranking-label');
+const fairRankingState = document.querySelector('#fair-ranking-state');
 const resetButton = document.querySelector('#reset');
 const resetConfirm = document.querySelector('#reset-confirm');
 const resetConfirmYes = document.querySelector('#reset-confirm-yes');
@@ -92,12 +96,15 @@ let events = null;
 let countdownEndsAt = null;
 let clockOffset = 0;
 let countdownTimer = null;
+// 本場公平順位設定：開始回應、phase 事件與摘要都會帶，取最新的一份（add-fair-ranking design 第 5 節）
+let fairRankingEnabled = false;
 
 function recordServerTime(data) {
   if (!data || typeof data !== 'object') return;
   const serverTime = Date.parse(data.serverTime);
   if (Number.isFinite(serverTime)) clockOffset = serverTime - Date.now();
   if ('countdownEndsAt' in data) countdownEndsAt = typeof data.countdownEndsAt === 'string' ? data.countdownEndsAt : null;
+  if ('fairRankingEnabled' in data) fairRankingEnabled = data.fairRankingEnabled === true;
 }
 
 function renderCountdown() {
@@ -139,6 +146,11 @@ function renderConsole() {
   countdownMinutes.disabled = !controls.canEditCountdown;
   countdownSeconds.disabled = !controls.canEditCountdown;
   countdownFields.hidden = !countdownEnabled.checked;
+  fairRanking.disabled = !controls.canEditFairRanking;
+  const fairRankingText = describeFairRanking(consoleState.summary && { ...consoleState.summary, fairRankingEnabled });
+  fairRankingLabel.hidden = fairRankingText === '';
+  fairRankingState.hidden = fairRankingText === '';
+  fairRankingState.textContent = fairRankingText;
   sessionMessage.textContent = describeAction(consoleState);
 
   renderCountdown();
@@ -282,7 +294,10 @@ startButton.addEventListener('click', async () => {
   }
   dispatchConsole({ type: 'requestStart' });
   try {
-    const body = countdown.countdownSeconds === null ? {} : { countdownSeconds: countdown.countdownSeconds };
+    const body = {
+      ...(countdown.countdownSeconds === null ? {} : { countdownSeconds: countdown.countdownSeconds }),
+      fairRankingEnabled: fairRanking.checked,
+    };
     const { data } = await postJson('/api/session/start', body);
     recordServerTime(data);
     dispatchConsole({ type: 'startDone', phase: data.phase });

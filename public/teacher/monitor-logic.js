@@ -43,7 +43,9 @@ function answerText(answers) {
 function summaryOf(question, phase, groupCount) {
   if (phase === ENDED) {
     if (!question.settled) return '判定中';
-    return question.winner ? `${question.winner.groupName} ${answerText(question.winner.answers)}` : '無人作答';
+    if (!question.winner) return '無人作答';
+    const fair = question.winnerSource === 'fair' ? '（公平順位改判）' : '';
+    return `${question.winner.groupName} ${answerText(question.winner.answers)}${fair}`;
   }
   const count = `已送出 ${question.submittedCount}／${groupCount} 組`;
   if (!question.settled) return `${count}，判定中`;
@@ -51,9 +53,20 @@ function summaryOf(question, phase, groupCount) {
   return `${count}，第 1 名：${question.winner.groupName} ${answerText(question.winner.answers)}`;
 }
 
+// 明細順序：有效作答依名次（公平順位改判後名次可能與送達順序不同），已作廢的依送達順序排在最後；
+// 沒有名次的有效作答依送達順序排在有名次者之後（add-fair-ranking design 第 5 節）
+function orderedEntries(entries) {
+  const valid = entries.filter(({ status }) => status === 'valid');
+  const voided = entries.filter(({ status }) => status !== 'valid');
+  const byRank = (left, right) => left.rank - right.rank;
+  const placed = valid.filter(({ place }) => place).sort((left, right) => left.place - right.place || byRank(left, right));
+  const unplaced = valid.filter(({ place }) => !place).sort(byRank);
+  return [...placed, ...unplaced, ...voided.sort(byRank)];
+}
+
 // 只有搶答中的有效作答可以作廢（add-submission-void design 第 6 節）
 function detailsOf(question, phase) {
-  const lines = question.entries.map((entry) => ({
+  const lines = orderedEntries(question.entries).map((entry) => ({
     text: [
       entry.status === 'valid' ? (entry.place ? `第 ${entry.place} 名` : '判定中') : '已作廢',
       entry.groupName,

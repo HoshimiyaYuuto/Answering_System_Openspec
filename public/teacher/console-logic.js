@@ -113,6 +113,7 @@ export function getConsoleControls(state) {
     showResetConfirm: state.view === 'console' && state.confirmingReset,
     canConfirmReset: idle && phase === ENDED && state.confirmingReset,
     canEditCountdown: idle && phase === PREPARING,
+    canEditFairRanking: idle && phase === PREPARING,
     canLogout: state.view === 'console',
     canSetup: state.view === 'console' && phase === PREPARING,
   };
@@ -126,6 +127,12 @@ export function getSetupBlockedReason(phase) {
 export function describeSummary(summary) {
   if (!summary) return { phase: '讀取中…', counts: '' };
   return { phase: summary.phase, counts: `${summary.groupCount} 組、${summary.questionCount} 題` };
+}
+
+// 活動狀態的「公平順位」列：準備中與尚未載入時隱藏（空字串），開始後顯示本場設定
+export function describeFairRanking(summary) {
+  if (!summary || summary.phase === PREPARING) return '';
+  return summary.fairRankingEnabled === true ? '啟用' : '不啟用';
 }
 
 export function describeAction(state) {
