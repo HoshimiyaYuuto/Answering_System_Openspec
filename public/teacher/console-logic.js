@@ -1,19 +1,25 @@
+import { ZH, renderMessage } from './messages.js';
+
 const PREPARING = '準備中';
 const RUNNING = '搶答中';
 const ENDED = '已結束';
 
-export const AUTH_EXPIRED_MESSAGE = '登入已失效，請重新登入。';
-const LOGIN_MESSAGES = {
-  WRONG_PASSWORD: '密碼錯誤，請再試一次。',
-  TOO_MANY_ATTEMPTS: '嘗試次數過多，請稍後再試。',
-  INVALID_LOGIN_REQUEST: '請輸入密碼。',
-};
-const NO_RESPONSE_MESSAGE = '伺服器沒有回應，請稍後再試。';
+export const AUTH_EXPIRED_MESSAGE = ZH('login.expired');
+const LOGIN_CODES = new Set(['WRONG_PASSWORD', 'TOO_MANY_ATTEMPTS', 'INVALID_LOGIN_REQUEST']);
+
+// 登入錯誤以描述保存，畫面時才依語言組字（add-teacher-language-switch design 第 2 節）；
+// loginError 仍是繁中文字，供既有測試與舊呼叫使用
+function loginErrorMessage(event) {
+  if (LOGIN_CODES.has(event.code)) return { key: `login.${event.code}` };
+  if (event.message) return event.message;
+  return { key: 'login.noResponse' };
+}
 
 export function createConsoleState() {
   return {
     view: 'checking',
     loginError: '',
+    loginErrorMessage: '',
     loggingIn: false,
     summary: null,
     action: null,
@@ -23,8 +29,8 @@ export function createConsoleState() {
   };
 }
 
-function toLogin(state, loginError) {
-  return { ...createConsoleState(), view: 'login', loginError };
+function toLogin(state, loginErrorMessage) {
+  return { ...createConsoleState(), view: 'login', loginError: renderMessage(ZH, loginErrorMessage), loginErrorMessage };
 }
 
 function withPhase(state, phase) {
@@ -41,15 +47,18 @@ export function reduceConsole(state, event) {
   switch (event.type) {
     case 'authLoaded':
       if (!event.passwordConfigured) return { ...createConsoleState(), view: 'notConfigured' };
-      if (event.authenticated) return { ...state, view: 'console', loginError: '' };
+      if (event.authenticated) return { ...state, view: 'console', loginError: '', loginErrorMessage: '' };
       return toLogin(state, '');
     case 'requestLogin':
-      return { ...state, loggingIn: true, loginError: '' };
+      return { ...state, loggingIn: true, loginError: '', loginErrorMessage: '' };
     case 'loginFailed':
       if (event.code === 'TEACHER_PASSWORD_NOT_SET') return { ...createConsoleState(), view: 'notConfigured' };
-      return { ...state, loggingIn: false, loginError: LOGIN_MESSAGES[event.code] ?? event.message ?? NO_RESPONSE_MESSAGE };
+    {
+      const message = loginErrorMessage(event);
+      return { ...state, loggingIn: false, loginError: renderMessage(ZH, message), loginErrorMessage: message };
+    }
     case 'loggedIn':
-      return { ...state, view: 'console', loggingIn: false, loginError: '', message: '' };
+      return { ...state, view: 'console', loggingIn: false, loginError: '', loginErrorMessage: '', message: '' };
     case 'summaryLoaded':
       return withPhase({ ...state, summary: event.summary }, event.summary?.phase);
     case 'phaseChanged':
@@ -88,7 +97,7 @@ export function reduceConsole(state, event) {
       }
       return withPhase({ ...state, action: null, message: event.message }, event.phase);
     case 'authExpired':
-      return toLogin(state, AUTH_EXPIRED_MESSAGE);
+      return toLogin(state, { key: 'login.expired' });
     case 'loggedOut':
       return toLogin(state, '');
     default:
@@ -119,30 +128,38 @@ export function getConsoleControls(state) {
   };
 }
 
-export function getSetupBlockedReason(phase) {
-  if (!phase || phase === PREPARING) return '';
-  return `目前階段為「${phase}」，只能在準備中設定組別與匯入學習單。`;
+export function describeLoginError(state, t = ZH) {
+  return renderMessage(t, state.loginErrorMessage || state.loginError);
 }
 
-export function describeSummary(summary) {
-  if (!summary) return { phase: '讀取中…', counts: '' };
-  return { phase: summary.phase, counts: `${summary.groupCount} 組、${summary.questionCount} 題` };
+export function getSetupBlockedReason(phase, t = ZH) {
+  if (!phase || phase === PREPARING) return '';
+  return t('session.setupBlocked', { phase: t(`phase.${phase}`) });
+}
+
+export function describeSummary(summary, t = ZH) {
+  if (!summary) return { phase: t('common.loading'), counts: '' };
+  return {
+    phase: t(`phase.${summary.phase}`),
+    counts: t('session.counts', { groups: summary.groupCount, questions: summary.questionCount }),
+  };
 }
 
 // 活動狀態的「公平順位」列：準備中與尚未載入時隱藏（空字串），開始後顯示本場設定
-export function describeFairRanking(summary) {
+export function describeFairRanking(summary, t = ZH) {
   if (!summary || summary.phase === PREPARING) return '';
-  return summary.fairRankingEnabled === true ? '啟用' : '不啟用';
+  return summary.fairRankingEnabled === true ? t('session.fairEnabled') : t('session.fairDisabled');
 }
 
-export function describeAction(state) {
-  if (state.action === 'starting') return '開始搶答中…';
-  if (state.action === 'ending') return '結束搶答中…';
-  if (state.action === 'resetting') return '重設活動中…';
-  return state.message;
+// state.message 可以是字串或訊息描述（design 第 2 節）
+export function describeAction(state, t = ZH) {
+  if (state.action === 'starting') return t('session.starting');
+  if (state.action === 'ending') return t('session.ending');
+  if (state.action === 'resetting') return t('session.resetting');
+  return renderMessage(t, state.message);
 }
 
-export const COUNTDOWN_RANGE_MESSAGE = '倒數時間需介於 10 秒到 60 分鐘。';
+export const COUNTDOWN_RANGE_MESSAGE = ZH('session.countdownRange');
 const MIN_COUNTDOWN_SECONDS = 10;
 const MAX_COUNTDOWN_SECONDS = 3600;
 
@@ -154,13 +171,13 @@ function toWholeNumber(value) {
 }
 
 // 倒數輸入換算成秒數；未勾選時不倒數（design 第 6 節）
-export function parseCountdown({ enabled, minutes, seconds }) {
+export function parseCountdown({ enabled, minutes, seconds }, t = ZH) {
   if (!enabled) return { ok: true, countdownSeconds: null };
   const wholeMinutes = toWholeNumber(minutes);
   const wholeSeconds = toWholeNumber(seconds);
-  if (wholeMinutes === null || wholeSeconds === null) return { ok: false, message: COUNTDOWN_RANGE_MESSAGE };
+  if (wholeMinutes === null || wholeSeconds === null) return { ok: false, message: t('session.countdownRange') };
   const total = wholeMinutes * 60 + wholeSeconds;
-  if (total < MIN_COUNTDOWN_SECONDS || total > MAX_COUNTDOWN_SECONDS) return { ok: false, message: COUNTDOWN_RANGE_MESSAGE };
+  if (total < MIN_COUNTDOWN_SECONDS || total > MAX_COUNTDOWN_SECONDS) return { ok: false, message: t('session.countdownRange') };
   return { ok: true, countdownSeconds: total };
 }
 

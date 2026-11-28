@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101828">
-  <title>投影看板｜課堂搶答</title>
+  <title data-i18n="board.pageTitle">投影看板｜課堂搶答</title>
   <style>
     :root { color-scheme: dark; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; color: #f4f7fb; background: #101828; }
     * { box-sizing: border-box; }
@@ -32,13 +32,18 @@
     .results li.hidden-result .text { color: #667085; }
     .results .label { font-weight: 800; }
     .hint { color: #98a2b3; font-size: 1.2rem; }
+    .language-switch { position: fixed; top: 16px; right: 16px; display: inline-flex; border: 1px solid #475467; border-radius: 10px; overflow: hidden; z-index: 1; }
+    .language-switch button { min-height: 44px; padding: 6px 16px; border-radius: 0; color: #f4f7fb; background: #1d2939; font-size: 1.1rem; }
+    .language-switch button[aria-pressed="true"] { color: #101828; background: #f4f7fb; }
+    main { padding-top: 48px; }
     .error { color: #fda29b; font-size: 1.2rem; }
   </style>
 </head>
 <body>
+  <div id="language-switch" class="language-switch"></div>
   <main>
-    <p id="checking" class="notice">讀取中…</p>
-    <p id="login" class="notice" hidden><span id="login-message"></span>：<a href="/teacher/">前往教師控制台</a></p>
+    <p id="checking" class="notice" data-i18n="common.loading">讀取中…</p>
+    <p id="login" class="notice" hidden><span id="login-message"></span><span data-i18n="board.loginSeparator">：</span><a href="/teacher/" data-i18n="board.goToConsole">前往教師控制台</a></p>
 
     <div id="board" hidden>
       <div class="top">
@@ -46,19 +51,19 @@
         <p id="countdown" aria-live="off" hidden></p>
       </div>
 
-      <section id="presence-section" aria-label="各組在線狀態" hidden>
+      <section id="presence-section" aria-label="各組在線狀態" data-i18n-attr="aria-label:board.presenceLabel" hidden>
         <p id="online-count"></p>
         <ul id="groups" class="groups"></ul>
       </section>
 
       <section id="results-section" aria-labelledby="results-title" hidden>
-        <h2 id="results-title">搶答結果</h2>
+        <h2 id="results-title" data-i18n="board.resultsTitle">搶答結果</h2>
         <div class="controls">
-          <button id="reveal-next" type="button">揭曉下一題</button>
-          <button id="reveal-all" type="button" class="secondary">全部揭曉</button>
+          <button id="reveal-next" type="button" data-i18n="board.revealNext">揭曉下一題</button>
+          <button id="reveal-all" type="button" class="secondary" data-i18n="board.revealAll">全部揭曉</button>
         </div>
         <p id="revealed-count"></p>
-        <p id="results-loading" class="hint" hidden>正在讀取結果…</p>
+        <p id="results-loading" class="hint" hidden data-i18n="board.loadingResults">正在讀取結果…</p>
         <ol id="results" class="results"></ol>
       </section>
 

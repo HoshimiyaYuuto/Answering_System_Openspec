@@ -1,12 +1,13 @@
 // 投影看板的純邏輯（add-projector-board design 第 3 節）：不碰 DOM 與網路，可用 node --test 驗證。
 import { formatRemaining } from './console-logic.js';
+import { ZH } from './messages.js';
 
 const PREPARING = '準備中';
 const BUZZING = '搶答中';
 const ENDED = '已結束';
 
-export const LOGIN_REQUIRED_MESSAGE = '請先在教師控制台登入';
-export const NOT_REVEALED_TEXT = '尚未揭曉';
+export const LOGIN_REQUIRED_MESSAGE = ZH('board.loginRequired');
+export const NOT_REVEALED_TEXT = ZH('board.notRevealed');
 
 // 每個資源同時只有一個請求；請求中收到的變動只累積成一次後續請求，舊序號的回應直接丟棄
 function createResource(seq = 0) {
@@ -88,25 +89,29 @@ export function reduceBoard(state, event) {
   }
 }
 
-function resultText(question) {
+function resultText(question, t) {
   if (question.winner) {
     const answers = Array.isArray(question.winner.answers) ? question.winner.answers : [];
-    const fair = question.winnerSource === 'fair' ? '（公平順位改判）' : '';
-    return `${question.winner.groupName}「${answers.join('／')}」${fair}`;
+    const fair = question.winnerSource === 'fair' ? t('board.fair') : '';
+    return t('board.winner', { group: question.winner.groupName, answers: answers.join(t('board.answerSeparator')), fair });
   }
-  return question.settled === false ? '判定中' : '無人作答';
+  return question.settled === false ? t('board.judging') : t('board.noAnswer');
 }
 
-function groupsView(presence) {
-  return (presence ?? []).map(({ name, online }) => ({ name, online: online === true, statusText: online === true ? '在線' : '離線' }));
+function groupsView(presence, t) {
+  return (presence ?? []).map(({ name, online }) => ({
+    name,
+    online: online === true,
+    statusText: online === true ? t('board.online') : t('board.offline'),
+  }));
 }
 
 // 搶答中的檢視只含階段、倒數與在線，沒有任何作答相關欄位（D16）
-export function getBoardView(state, serverNowMs) {
-  if (state.auth === 'checking') return { view: 'checking', message: '讀取中…' };
-  if (state.auth === 'out') return { view: 'login', message: LOGIN_REQUIRED_MESSAGE };
+export function getBoardView(state, serverNowMs, t = ZH) {
+  if (state.auth === 'checking') return { view: 'checking', message: t('common.loading') };
+  if (state.auth === 'out') return { view: 'login', message: t('board.loginRequired') };
   const phase = state.summary?.phase;
-  if (!phase) return { view: 'board', phaseText: '讀取中…', countdownText: '', groups: [], onlineText: '', results: null };
+  if (!phase) return { view: 'board', phaseText: t('common.loading'), countdownText: '', groups: [], onlineText: '', results: null };
 
   if (phase === ENDED) {
     const questions = [...(state.results.data ?? [])].sort((left, right) => left.id - right.id);
@@ -114,34 +119,34 @@ export function getBoardView(state, serverNowMs) {
     const loadedResults = state.results.data !== null;
     return {
       view: 'board',
-      phaseText: phase,
+      phaseText: t(`phase.${phase}`),
       countdownText: '',
       groups: [],
       onlineText: '',
       results: {
         loading: !loadedResults,
         rows: questions.map((question, index) => ({
-          label: `第 ${question.id} 題`,
+          label: t('board.questionLabel', { id: question.id }),
           revealed: index < state.revealed,
-          text: index < state.revealed ? resultText(question) : NOT_REVEALED_TEXT,
+          text: index < state.revealed ? resultText(question, t) : t('board.notRevealed'),
         })),
-        revealedText: loadedResults ? `已揭曉 ${state.revealed}／${total} 題` : '',
+        revealedText: loadedResults ? t('board.revealed', { revealed: state.revealed, total }) : '',
         canRevealNext: loadedResults && state.revealed < total,
         canRevealAll: loadedResults && state.revealed < total,
       },
     };
   }
 
-  const groups = groupsView(state.presence.data);
+  const groups = groupsView(state.presence.data, t);
   const countdownText = phase === BUZZING && state.summary.countdownEndsAt
     ? formatRemaining(state.summary.countdownEndsAt, serverNowMs)
     : '';
   return {
     view: 'board',
-    phaseText: phase,
+    phaseText: t(`phase.${phase}`),
     countdownText,
     groups,
-    onlineText: state.presence.data ? `在線 ${groups.filter(({ online }) => online).length}／${groups.length} 組` : '',
+    onlineText: state.presence.data ? t('board.onlineCount', { online: groups.filter(({ online }) => online).length, total: groups.length }) : '',
     results: null,
   };
 }

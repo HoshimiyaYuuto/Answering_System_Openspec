@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import ExcelJS from 'exceljs';
 import os from 'node:os';
 import { test } from 'node:test';
 import { GuidedNotesImportError } from './guided-notes-import.js';
@@ -360,6 +361,36 @@ test('confirm is rejected outside preparation', async () => {
     assert.equal(status, 409);
     assert.equal(body.error.code, 'IMPORT_NOT_ALLOWED');
     assert.equal(await questionCount(url), 6);
+  } finally {
+    await close(server);
+  }
+});
+
+// add-teacher-language-switch task 1.1：預覽與確認後的摘要都帶出結構化提醒
+test('preview and confirmed summary carry warning details next to the warning texts', async () => {
+  const { server, url } = await startApp();
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('提醒');
+    [['題號', '題目', '作答', ''], [1, '空白', '', ''], [2, '已有答案', '上次的答案', '']]
+      .forEach((row, index) => { sheet.getRow(index + 1).values = row; });
+    for (const range of ['C1:D1', 'C2:D2', 'C3:D3']) sheet.mergeCells(range);
+    const preview = await uploadFile(url, Buffer.from(await workbook.xlsx.writeBuffer()));
+    assert.equal(preview.status, 200);
+    assert.deepEqual(preview.body.data.warnings, ['第 2 題第 1 格（C3）已有內容，匯出時會被取代。']);
+    const details = [{ code: 'ANSWER_CELL_NOT_EMPTY', questionId: 2, blankIndex: 1, cell: 'C3' }];
+    assert.deepEqual(preview.body.data.warningDetails, details);
+
+    const confirmed = await postJson(url, '/api/teacher/guided-notes/confirm', { previewId: preview.body.data.previewId });
+    assert.equal(confirmed.status, 200);
+    assert.deepEqual(confirmed.body.data.current.warningDetails, details);
+    const current = await call(url, '/api/teacher/guided-notes');
+    assert.deepEqual(current.body.data.current.warningDetails, details);
+    assert.deepEqual(current.body.data.current.warnings, preview.body.data.warnings);
+
+    const clean = await uploadFile(url, await fixture('01-official-single.xlsx'));
+    assert.deepEqual(clean.body.data.warnings, []);
+    assert.deepEqual(clean.body.data.warningDetails, []);
   } finally {
     await close(server);
   }
