@@ -1,10 +1,13 @@
 import {
   createConsoleState,
   describeAction,
+  describeFairRanking,
   describeSummary,
+  formatRemaining,
   getConsoleControls,
   getSetupBlockedReason,
   isAuthExpired,
+  parseCountdown,
   reduceConsole,
 } from './console-logic.js';
 import {
@@ -64,6 +67,7 @@ const passwordInput = document.querySelector('#password');
 const loginSubmit = document.querySelector('#login-submit');
 const loginMessage = document.querySelector('#login-message');
 const logoutButton = document.querySelector('#logout');
+const boardLink = document.querySelector('#board-link');
 const summaryPhase = document.querySelector('#summary-phase');
 const summaryCounts = document.querySelector('#summary-counts');
 const startButton = document.querySelector('#start');
@@ -72,10 +76,49 @@ const endConfirm = document.querySelector('#end-confirm');
 const endConfirmYes = document.querySelector('#end-confirm-yes');
 const endConfirmNo = document.querySelector('#end-confirm-no');
 const sessionMessage = document.querySelector('#session-message');
+const countdownEnabled = document.querySelector('#countdown-enabled');
+const countdownFields = document.querySelector('#countdown-fields');
+const countdownMinutes = document.querySelector('#countdown-minutes');
+const countdownSeconds = document.querySelector('#countdown-seconds');
+const countdownLabel = document.querySelector('#countdown-label');
+const countdownRemaining = document.querySelector('#countdown-remaining');
+const fairRanking = document.querySelector('#fair-ranking');
+const fairRankingLabel = document.querySelector('#fair-ranking-label');
+const fairRankingState = document.querySelector('#fair-ranking-state');
+const resetButton = document.querySelector('#reset');
+const resetConfirm = document.querySelector('#reset-confirm');
+const resetConfirmYes = document.querySelector('#reset-confirm-yes');
+const resetConfirmNo = document.querySelector('#reset-confirm-no');
 
 let consoleState = createConsoleState();
 const summaryRequests = createRequestSequence();
 let events = null;
+// 倒數以 server 時間計算：記下 server 與本機時鐘的差（add-countdown-and-reset design 第 2 節）
+let countdownEndsAt = null;
+let clockOffset = 0;
+let countdownTimer = null;
+// 本場公平順位設定：開始回應、phase 事件與摘要都會帶，取最新的一份（add-fair-ranking design 第 5 節）
+let fairRankingEnabled = false;
+
+function recordServerTime(data) {
+  if (!data || typeof data !== 'object') return;
+  const serverTime = Date.parse(data.serverTime);
+  if (Number.isFinite(serverTime)) clockOffset = serverTime - Date.now();
+  if ('countdownEndsAt' in data) countdownEndsAt = typeof data.countdownEndsAt === 'string' ? data.countdownEndsAt : null;
+  if ('fairRankingEnabled' in data) fairRankingEnabled = data.fairRankingEnabled === true;
+}
+
+function renderCountdown() {
+  const running = consoleState.view === 'console' && consoleState.summary?.phase === '搶答中' && countdownEndsAt !== null;
+  countdownLabel.hidden = !running;
+  countdownRemaining.hidden = !running;
+  countdownRemaining.textContent = running ? `剩餘 ${formatRemaining(countdownEndsAt, Date.now() + clockOffset)}` : '';
+  if (running && countdownTimer === null) countdownTimer = setInterval(renderCountdown, 1000);
+  if (!running && countdownTimer !== null) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+}
 
 function renderConsole() {
   const controls = getConsoleControls(consoleState);
@@ -84,6 +127,8 @@ function renderConsole() {
   loginView.hidden = consoleState.view !== 'login';
   consoleView.hidden = consoleState.view !== 'console';
   logoutButton.hidden = !controls.canLogout;
+  // 投影看板需要老師登入，只在控制台畫面顯示連結（add-projector-board design 第 4 節）
+  boardLink.hidden = consoleState.view !== 'console';
 
   loginSubmit.disabled = !controls.canLogin;
   passwordInput.disabled = !controls.canLogin;
@@ -97,8 +142,21 @@ function renderConsole() {
   endButton.disabled = !controls.canEnd;
   endConfirm.hidden = !controls.showEndConfirm;
   endConfirmYes.disabled = !controls.canConfirmEnd;
+  resetButton.disabled = !controls.canReset;
+  resetConfirm.hidden = !controls.showResetConfirm;
+  resetConfirmYes.disabled = !controls.canConfirmReset;
+  countdownEnabled.disabled = !controls.canEditCountdown;
+  countdownMinutes.disabled = !controls.canEditCountdown;
+  countdownSeconds.disabled = !controls.canEditCountdown;
+  countdownFields.hidden = !countdownEnabled.checked;
+  fairRanking.disabled = !controls.canEditFairRanking;
+  const fairRankingText = describeFairRanking(consoleState.summary && { ...consoleState.summary, fairRankingEnabled });
+  fairRankingLabel.hidden = fairRankingText === '';
+  fairRankingState.hidden = fairRankingText === '';
+  fairRankingState.textContent = fairRankingText;
   sessionMessage.textContent = describeAction(consoleState);
 
+  renderCountdown();
   renderGroupsLock();
 }
 
@@ -123,6 +181,7 @@ async function loadSummary() {
   try {
     const { data } = await requestJson('/api/session');
     if (!summaryRequests.isLatest(requestId)) return;
+    recordServerTime(data);
     dispatchConsole({ type: 'summaryLoaded', summary: data });
     dispatchImport({ type: 'phaseChanged', phase: data.phase });
     dispatchExport({ type: 'phaseChanged', phase: data.phase });
@@ -154,7 +213,9 @@ function openEvents() {
   source.addEventListener('monitor', () => monitorChanged());
   events.addEventListener('phase', (event) => {
     try {
-      const { phase } = JSON.parse(event.data);
+      const update = JSON.parse(event.data);
+      const { phase } = update;
+      recordServerTime(update);
       dispatchConsole({ type: 'phaseChanged', phase });
       dispatchImport({ type: 'phaseChanged', phase });
       dispatchExport({ type: 'phaseChanged', phase });
@@ -221,11 +282,27 @@ logoutButton.addEventListener('click', async () => {
   dispatchConsole({ type: 'loggedOut' });
 });
 
+countdownEnabled.addEventListener('change', () => renderConsole());
+
 startButton.addEventListener('click', async () => {
   if (!getConsoleControls(consoleState).canStart) return;
+  const countdown = parseCountdown({
+    enabled: countdownEnabled.checked,
+    minutes: countdownMinutes.value,
+    seconds: countdownSeconds.value,
+  });
+  if (!countdown.ok) {
+    dispatchConsole({ type: 'startFailed', message: countdown.message });
+    return;
+  }
   dispatchConsole({ type: 'requestStart' });
   try {
-    const { data } = await requestJson('/api/session/start', { method: 'POST' });
+    const body = {
+      ...(countdown.countdownSeconds === null ? {} : { countdownSeconds: countdown.countdownSeconds }),
+      fairRankingEnabled: fairRanking.checked,
+    };
+    const { data } = await postJson('/api/session/start', body);
+    recordServerTime(data);
     dispatchConsole({ type: 'startDone', phase: data.phase });
     dispatchImport({ type: 'phaseChanged', phase: data.phase });
   } catch (error) {
@@ -257,6 +334,38 @@ endConfirmYes.addEventListener('click', async () => {
     dispatchConsole({ type: 'endFailed', code: error.code, message: error.message, phase });
   }
   if (consoleState.view === 'console') loadSummary();
+});
+
+resetButton.addEventListener('click', () => {
+  if (getConsoleControls(consoleState).canReset) dispatchConsole({ type: 'requestReset' });
+});
+
+resetConfirmNo.addEventListener('click', () => dispatchConsole({ type: 'cancelReset' }));
+
+resetConfirmYes.addEventListener('click', async () => {
+  if (!getConsoleControls(consoleState).canConfirmReset) return;
+  dispatchConsole({ type: 'confirmReset' });
+  try {
+    const { data } = await requestJson('/api/session/reset', { method: 'POST' });
+    recordServerTime(data);
+    countdownEndsAt = null;
+    dispatchConsole({ type: 'resetDone', phase: data.phase });
+    dispatchImport({ type: 'phaseChanged', phase: data.phase });
+    dispatchExport({ type: 'phaseChanged', phase: data.phase });
+  } catch (error) {
+    if (handleAuthError(error)) return;
+    let phase = currentPhase();
+    try {
+      phase = (await requestJson('/api/session')).data.phase;
+    } catch {
+      // 讀不到最新階段時維持畫面上的階段
+    }
+    dispatchConsole({ type: 'resetFailed', code: error.code, message: error.message, phase });
+  }
+  if (consoleState.view === 'console') {
+    loadSummary();
+    monitorChanged();
+  }
 });
 
 document.addEventListener('visibilitychange', () => {

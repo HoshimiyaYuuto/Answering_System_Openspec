@@ -114,8 +114,8 @@ test('details list places, voided entries, answers, local time and groups not su
   const time = formatLocalTime(SUBMITTED_AT);
   assert.match(time, /^\d{2}:\d{2}:03$/);
   assert.deepEqual(view('搶答中', [voided]).rows[0].details, [
-    { text: `已作廢　第 1 組　「錯」　${time}`, voided: true },
     { text: `第 1 名　第 2 組　「水／冰」　${time}`, voided: false, voidAction: { questionId: 1, rank: 2, groupName: '第 2 組' } },
+    { text: `已作廢　第 1 組　「錯」　${time}`, voided: true },
     { text: '未送出：第 3 組', voided: false },
   ]);
 });
@@ -130,12 +130,43 @@ test('only valid entries while buzzing carry a void action', () => {
     ],
   });
   const buzzing = view('搶答中', [mixed]).rows[0].details;
-  assert.equal(buzzing[0].voidAction, undefined, 'voided entry has no action');
-  assert.deepEqual(buzzing[1].voidAction, { questionId: 1, rank: 2, groupName: '第 2 組' });
+  assert.deepEqual(buzzing[0].voidAction, { questionId: 1, rank: 2, groupName: '第 2 組' });
+  assert.equal(buzzing[1].voidAction, undefined, 'voided entry has no action');
   assert.equal(buzzing[2].voidAction, undefined, 'not-submitted line has no action');
   for (const line of view('已結束', [mixed]).rows[0].details) assert.equal(line.voidAction, undefined);
 });
 
 test('invalid timestamps render as an empty time', () => {
   assert.equal(formatLocalTime('not-a-date'), '');
+});
+
+test('ended results mark winners decided by fair ranking', () => {
+  const fair = question({ id: 3, winner: { groupId: 2, groupName: '第 2 組', answers: ['水'] }, winnerSource: 'fair' });
+  const ended = view('已結束', [question(), fair]);
+  assert.equal(ended.rows[0].summary, '第 1 組 「H2O」');
+  assert.equal(ended.rows[1].summary, '第 2 組 「水」（公平順位改判）');
+});
+
+test('answering monitor does not mark fair ranking', () => {
+  const fair = question({ winner: { groupId: 2, groupName: '第 2 組', answers: ['水'] }, winnerSource: 'fair' });
+  assert.equal(view('搶答中', [fair]).rows[0].summary, '已送出 2／3 組，第 1 名：第 2 組 「水」');
+});
+
+test('details follow places after fair ranking and keep voided entries last', () => {
+  const time = formatLocalTime(SUBMITTED_AT);
+  const fair = question({
+    winner: { groupId: 2, groupName: '第 2 組', answers: ['水'] },
+    winnerSource: 'fair',
+    entries: [
+      { groupId: 4, groupName: '第 4 組', rank: 1, status: 'voided', place: null, answers: ['錯'], submittedAt: SUBMITTED_AT },
+      { groupId: 1, groupName: '第 1 組', rank: 2, status: 'valid', place: 2, answers: ['H2O'], submittedAt: SUBMITTED_AT },
+      { groupId: 2, groupName: '第 2 組', rank: 3, status: 'valid', place: 1, answers: ['水'], submittedAt: SUBMITTED_AT },
+    ],
+  });
+  assert.deepEqual(view('已結束', [fair]).rows[0].details.map(({ text }) => text), [
+    `第 1 名　第 2 組　「水」　${time}`,
+    `第 2 名　第 1 組　「H2O」　${time}`,
+    `已作廢　第 4 組　「錯」　${time}`,
+    '未送出：第 3 組',
+  ]);
 });

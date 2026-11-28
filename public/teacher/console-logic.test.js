@@ -2,12 +2,16 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   AUTH_EXPIRED_MESSAGE,
+  COUNTDOWN_RANGE_MESSAGE,
   createConsoleState,
   describeAction,
+  describeFairRanking,
   describeSummary,
+  formatRemaining,
   getConsoleControls,
   getSetupBlockedReason,
   isAuthExpired,
+  parseCountdown,
   reduceConsole,
 } from './console-logic.js';
 
@@ -138,4 +142,103 @@ test('setup panels explain why they are locked', () => {
   assert.equal(getSetupBlockedReason('準備中'), '');
   assert.equal(getSetupBlockedReason(undefined), '');
   assert.match(getSetupBlockedReason('搶答中'), /搶答中.*只能在準備中/);
+});
+test('reset is offered only after the activity ends and needs confirmation', () => {
+  for (const phase of ['準備中', '搶答中']) {
+    const controls = getConsoleControls(consoleIn(phase));
+    assert.equal(controls.canReset, false);
+    assert.equal(controls.canConfirmReset, false);
+  }
+  let state = consoleIn('已結束');
+  assert.equal(getConsoleControls(state).canReset, true);
+  state = reduceConsole(state, { type: 'requestReset' });
+  assert.deepEqual(
+    [getConsoleControls(state).canReset, getConsoleControls(state).showResetConfirm, getConsoleControls(state).canConfirmReset],
+    [false, true, true],
+  );
+  const cancelled = reduceConsole(state, { type: 'cancelReset' });
+  assert.equal(cancelled.confirmingReset, false);
+  assert.equal(getConsoleControls(cancelled).canReset, true);
+  assert.equal(cancelled.summary.phase, '已結束');
+
+  state = reduceConsole(state, { type: 'confirmReset' });
+  assert.equal(describeAction(state), '重設活動中…');
+  assert.equal(getConsoleControls(state).canConfirmReset, false);
+  state = reduceConsole(state, { type: 'resetDone', phase: '準備中' });
+  assert.equal(state.summary.phase, '準備中');
+  assert.equal(state.action, null);
+  assert.equal(getConsoleControls(state).canStart, true);
+  assert.equal(getConsoleControls(state).canSetup, true);
+});
+
+test('a duplicate reset that finds the activity in preparation shows no error', () => {
+  let state = reduceConsole(reduceConsole(consoleIn('已結束'), { type: 'requestReset' }), { type: 'confirmReset' });
+  state = reduceConsole(state, { type: 'resetFailed', code: 'INVALID_PHASE_TRANSITION', message: '只能在已結束時重設活動。', phase: '準備中' });
+  assert.equal(state.summary.phase, '準備中');
+  assert.equal(describeAction(state), '');
+  const other = reduceConsole(reduceConsole(consoleIn('已結束'), { type: 'confirmReset' }),
+    { type: 'resetFailed', code: undefined, message: '伺服器沒有回應，請稍後再試。', phase: '已結束' });
+  assert.equal(describeAction(other), '伺服器沒有回應，請稍後再試。');
+  assert.equal(other.summary.phase, '已結束');
+});
+
+test('leaving the ended phase closes the reset confirmation', () => {
+  const confirming = reduceConsole(consoleIn('已結束'), { type: 'requestReset' });
+  const reset = reduceConsole(confirming, { type: 'phaseChanged', phase: '準備中' });
+  assert.equal(reset.confirmingReset, false);
+  assert.equal(getConsoleControls(reset).showResetConfirm, false);
+});
+
+test('countdown inputs are editable only while preparing', () => {
+  assert.equal(getConsoleControls(consoleIn('準備中')).canEditCountdown, true);
+  assert.equal(getConsoleControls(consoleIn('搶答中')).canEditCountdown, false);
+  assert.equal(getConsoleControls(consoleIn('已結束')).canEditCountdown, false);
+  const starting = reduceConsole(consoleIn('準備中'), { type: 'requestStart' });
+  assert.equal(getConsoleControls(starting).canEditCountdown, false);
+});
+
+test('parseCountdown converts minutes and seconds and enforces 10 to 3600 seconds', () => {
+  assert.deepEqual(parseCountdown({ enabled: false, minutes: 'abc', seconds: '' }), { ok: true, countdownSeconds: null });
+  assert.deepEqual(parseCountdown({ enabled: true, minutes: '1', seconds: '30' }), { ok: true, countdownSeconds: 90 });
+  assert.deepEqual(parseCountdown({ enabled: true, minutes: '', seconds: '10' }), { ok: true, countdownSeconds: 10 });
+  assert.deepEqual(parseCountdown({ enabled: true, minutes: '60', seconds: '0' }), { ok: true, countdownSeconds: 3600 });
+  for (const input of [
+    { minutes: '0', seconds: '5' },
+    { minutes: '61', seconds: '0' },
+    { minutes: '60', seconds: '1' },
+    { minutes: '-1', seconds: '30' },
+    { minutes: '1.5', seconds: '0' },
+    { minutes: '', seconds: '' },
+  ]) {
+    assert.deepEqual(parseCountdown({ enabled: true, ...input }), { ok: false, message: COUNTDOWN_RANGE_MESSAGE }, JSON.stringify(input));
+  }
+});
+
+test('formatRemaining uses the given server time, rounds up and never goes below zero', () => {
+  const endsAt = '2026-11-26T01:01:30.000Z';
+  const at = (iso) => Date.parse(iso);
+  assert.equal(formatRemaining(endsAt, at('2026-11-26T01:00:00.000Z')), '1:30');
+  assert.equal(formatRemaining(endsAt, at('2026-11-26T01:01:29.100Z')), '0:01');
+  assert.equal(formatRemaining(endsAt, at('2026-11-26T01:01:30.000Z')), '0:00');
+  assert.equal(formatRemaining(endsAt, at('2026-11-26T01:05:00.000Z')), '0:00');
+  assert.equal(formatRemaining('2026-11-26T02:00:00.000Z', at('2026-11-26T01:00:00.000Z')), '60:00');
+  assert.equal(formatRemaining(null, at('2026-11-26T01:00:00.000Z')), '');
+});
+
+test('fair ranking checkbox is editable only while preparing and idle', () => {
+  assert.equal(getConsoleControls(consoleIn('準備中')).canEditFairRanking, true);
+  assert.equal(getConsoleControls(consoleIn('搶答中')).canEditFairRanking, false);
+  assert.equal(getConsoleControls(consoleIn('已結束')).canEditFairRanking, false);
+  const starting = reduceConsole(consoleIn('準備中'), { type: 'requestStart' });
+  assert.equal(getConsoleControls(starting).canEditFairRanking, false);
+});
+
+test('describeFairRanking hides before starting and shows the setting afterwards', () => {
+  assert.equal(describeFairRanking(null), '');
+  assert.equal(describeFairRanking(undefined), '');
+  assert.equal(describeFairRanking({ ...summary('準備中'), fairRankingEnabled: true }), '');
+  assert.equal(describeFairRanking({ ...summary('搶答中'), fairRankingEnabled: true }), '啟用');
+  assert.equal(describeFairRanking({ ...summary('搶答中'), fairRankingEnabled: false }), '不啟用');
+  assert.equal(describeFairRanking({ ...summary('已結束'), fairRankingEnabled: true }), '啟用');
+  assert.equal(describeFairRanking({ ...summary('已結束'), fairRankingEnabled: false }), '不啟用');
 });

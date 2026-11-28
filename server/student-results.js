@@ -1,11 +1,17 @@
-import { computeResults } from './results.js';
+// 判定結果由呼叫端傳入（與 buildMonitor、buildResultsCsv 相同），這裡只負責挑出學生可見的欄位。
 
 function publicBlanks(blanks = []) {
   return blanks.map(({ index, prefix, prompt }) => ({ index, prefix, prompt }));
 }
 
-export function buildStudentResults({ questions = [], submissions = [], groups = [], groupId } = {}) {
-  const computed = computeResults({ questions, submissions });
+export function buildStudentResults({
+  questions = [],
+  submissions = [],
+  results: computed = [],
+  fairRankingEnabled = false,
+  groups = [],
+  groupId,
+} = {}) {
   const groupsById = new Map(groups.map(({ id, name }) => [id, name]));
   const submissionsByQuestion = new Map();
 
@@ -17,6 +23,7 @@ export function buildStudentResults({ questions = [], submissions = [], groups =
   }
 
   return {
+    fairRankingEnabled: fairRankingEnabled === true,
     questions: [...questions]
       .sort((left, right) => left.id - right.id)
       .map((question) => {
@@ -37,6 +44,7 @@ export function buildStudentResults({ questions = [], submissions = [], groups =
             ? {
               groupName: groupsById.get(winningSubmission.groupId) ?? '（已移除的組別）',
               answers: [...winningSubmission.answers],
+              byFairRanking: result.winnerSource === 'fair',
             }
             : null,
           own: ownPlacing && ownSubmission

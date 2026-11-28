@@ -18,6 +18,7 @@ export function createConsoleState() {
     summary: null,
     action: null,
     confirmingEnd: false,
+    confirmingReset: false,
     message: '',
   };
 }
@@ -32,6 +33,7 @@ function withPhase(state, phase) {
     ...state,
     summary: { ...state.summary, phase },
     confirmingEnd: phase === RUNNING ? state.confirmingEnd : false,
+    confirmingReset: phase === ENDED ? state.confirmingReset : false,
   };
 }
 
@@ -71,6 +73,20 @@ export function reduceConsole(state, event) {
         return withPhase({ ...state, action: null, message: '' }, ENDED);
       }
       return withPhase({ ...state, action: null, message: event.message }, event.phase);
+    case 'requestReset':
+      return { ...state, confirmingReset: true, message: '' };
+    case 'cancelReset':
+      return { ...state, confirmingReset: false };
+    case 'confirmReset':
+      return { ...state, action: 'resetting', confirmingReset: false, message: '' };
+    case 'resetDone':
+      return withPhase({ ...state, action: null, message: '' }, event.phase);
+    case 'resetFailed':
+      // 另一個分頁已經重設：視為成功，不顯示錯誤（design 第 6 節）
+      if (event.code === 'INVALID_PHASE_TRANSITION' && event.phase === PREPARING) {
+        return withPhase({ ...state, action: null, message: '' }, PREPARING);
+      }
+      return withPhase({ ...state, action: null, message: event.message }, event.phase);
     case 'authExpired':
       return toLogin(state, AUTH_EXPIRED_MESSAGE);
     case 'loggedOut':
@@ -93,6 +109,11 @@ export function getConsoleControls(state) {
     canEnd: idle && phase === RUNNING && !state.confirmingEnd,
     showEndConfirm: state.view === 'console' && state.confirmingEnd,
     canConfirmEnd: idle && phase === RUNNING && state.confirmingEnd,
+    canReset: idle && phase === ENDED && !state.confirmingReset,
+    showResetConfirm: state.view === 'console' && state.confirmingReset,
+    canConfirmReset: idle && phase === ENDED && state.confirmingReset,
+    canEditCountdown: idle && phase === PREPARING,
+    canEditFairRanking: idle && phase === PREPARING,
     canLogout: state.view === 'console',
     canSetup: state.view === 'console' && phase === PREPARING,
   };
@@ -108,8 +129,47 @@ export function describeSummary(summary) {
   return { phase: summary.phase, counts: `${summary.groupCount} 組、${summary.questionCount} 題` };
 }
 
+// 活動狀態的「公平順位」列：準備中與尚未載入時隱藏（空字串），開始後顯示本場設定
+export function describeFairRanking(summary) {
+  if (!summary || summary.phase === PREPARING) return '';
+  return summary.fairRankingEnabled === true ? '啟用' : '不啟用';
+}
+
 export function describeAction(state) {
   if (state.action === 'starting') return '開始搶答中…';
   if (state.action === 'ending') return '結束搶答中…';
+  if (state.action === 'resetting') return '重設活動中…';
   return state.message;
+}
+
+export const COUNTDOWN_RANGE_MESSAGE = '倒數時間需介於 10 秒到 60 分鐘。';
+const MIN_COUNTDOWN_SECONDS = 10;
+const MAX_COUNTDOWN_SECONDS = 3600;
+
+function toWholeNumber(value) {
+  const text = String(value ?? '').trim();
+  if (text === '') return 0;
+  if (!/^\d+$/.test(text)) return null;
+  return Number(text);
+}
+
+// 倒數輸入換算成秒數；未勾選時不倒數（design 第 6 節）
+export function parseCountdown({ enabled, minutes, seconds }) {
+  if (!enabled) return { ok: true, countdownSeconds: null };
+  const wholeMinutes = toWholeNumber(minutes);
+  const wholeSeconds = toWholeNumber(seconds);
+  if (wholeMinutes === null || wholeSeconds === null) return { ok: false, message: COUNTDOWN_RANGE_MESSAGE };
+  const total = wholeMinutes * 60 + wholeSeconds;
+  if (total < MIN_COUNTDOWN_SECONDS || total > MAX_COUNTDOWN_SECONDS) return { ok: false, message: COUNTDOWN_RANGE_MESSAGE };
+  return { ok: true, countdownSeconds: total };
+}
+
+// 依 server 時間計算剩餘時間，無條件進位到秒、不小於 0，格式為 m:ss（design 第 2 節）
+export function formatRemaining(countdownEndsAt, serverNowMs) {
+  const endsAt = Date.parse(countdownEndsAt);
+  if (!Number.isFinite(endsAt) || !Number.isFinite(serverNowMs)) return '';
+  const remaining = Math.max(0, Math.ceil((endsAt - serverNowMs) / 1000));
+  const minutes = Math.floor(remaining / 60);
+  const seconds = String(remaining % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
 }

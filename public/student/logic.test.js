@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers } from './logic.js';
+import { applySubmission, buildResultsRows, formatAnswers, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, getSubmitErrorNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers, mergeVoided, reconcileVoided, applyVoid, formatRemaining, RESET_MESSAGE } from './logic.js';
 
 test('connection is considered stale only after forty seconds without an event', () => {
   assert.equal(isReconnecting(10_000, 50_000), false);
@@ -173,7 +173,7 @@ test('builds result rows, own win summary, and sorted question labels', () => {
 });
 
 test('buildResultsRows returns an empty summary for null or empty input', () => {
-  const empty = { summary: { ownWins: 0, total: 0, text: '本組成功 0 題／共 0 題' }, rows: [] };
+  const empty = { summary: { ownWins: 0, total: 0, text: '本組成功 0 題／共 0 題' }, fairRankingNotice: '', rows: [] };
   assert.deepEqual(buildResultsRows(null), empty);
   assert.deepEqual(buildResultsRows({}), empty);
   assert.deepEqual(buildResultsRows({ questions: [] }), empty);
@@ -199,4 +199,154 @@ test('result answer formatting preserves HTML characters as plain text content',
   }] });
   assert.equal(result.rows[0].winnerText, `第 1 組：${answer}`);
   assert.equal(result.rows[0].ownText, `本組第 1 名（成功）：${answer}`);
+});
+
+// ---- add-student-void-notice task 1.1 ----
+
+const T = (second) => `2026-11-26T01:00:${String(second).padStart(2, '0')}.000Z`;
+const sub = (questionId, second, answer = '答') => ({ questionId, answers: [answer], submittedAt: T(second) });
+const voidOf = (questionId, second) => ({ questionId, voidedAt: T(second) });
+
+test('a void later than the submission removes the submission', () => {
+  const state = applyVoid({ submissions: [sub(1, 1), sub(2, 1)], voided: [] }, voidOf(1, 5));
+  assert.deepEqual(state, { submissions: [sub(2, 1)], voided: [voidOf(1, 5)] });
+});
+
+test('a resubmission later than the void removes the void', () => {
+  assert.deepEqual(reconcileVoided([sub(1, 9, '重送')], [voidOf(1, 5)]), { submissions: [sub(1, 9, '重送')], voided: [] });
+});
+
+test('an old snapshot arriving after a void event does not lock the question again', () => {
+  const afterEvent = applyVoid({ submissions: [sub(1, 1)], voided: [] }, voidOf(1, 5));
+  const snapshot = { submissions: [sub(1, 1)], voided: [] };
+  const merged = reconcileVoided(mergeSubmissions(afterEvent.submissions, snapshot.submissions), mergeVoided(afterEvent.voided, snapshot.voided));
+  assert.deepEqual(merged, { submissions: [], voided: [voidOf(1, 5)] });
+});
+
+test('an old snapshot arriving after a resubmission does not bring the void notice back', () => {
+  const current = { submissions: [sub(1, 9, '重送')], voided: [] };
+  const snapshot = { submissions: [], voided: [voidOf(1, 5)] };
+  const merged = reconcileVoided(mergeSubmissions(current.submissions, snapshot.submissions), mergeVoided(current.voided, snapshot.voided));
+  assert.deepEqual(merged, { submissions: [sub(1, 9, '重送')], voided: [] });
+});
+
+test('repeated voids of a question keep the latest time', () => {
+  assert.deepEqual(mergeVoided([voidOf(1, 5)], [voidOf(1, 3), voidOf(2, 4)]), [voidOf(1, 5), voidOf(2, 4)]);
+  assert.deepEqual(mergeVoided([voidOf(1, 3)], [voidOf(1, 8)]), [voidOf(1, 8)]);
+  assert.deepEqual(mergeVoided(null, undefined), []);
+});
+
+test('a snapshot submission newer than the local one replaces it', () => {
+  assert.deepEqual(mergeSubmissions([sub(1, 1, '舊')], [sub(1, 9, '新')]), [sub(1, 9, '新')]);
+  assert.deepEqual(mergeSubmissions([sub(1, 9, '本機')], [sub(1, 9, '快照')]), [sub(1, 9, '本機')], 'equal time keeps local');
+});
+
+test('question status order is submitted, voided, draft, unanswered', () => {
+  assert.equal(getQuestionStatus(true, true, true), 'submitted');
+  assert.equal(getQuestionStatus(false, true, true), 'voided');
+  assert.equal(getQuestionStatus(false, true, false), 'draft');
+  assert.equal(getQuestionStatus(false, false, false), 'unanswered');
+  assert.equal(getQuestionStatus(false, true), 'draft', 'two-argument calls are unchanged');
+});
+
+test('void helpers do not mutate their inputs', () => {
+  const submissions = [sub(1, 1), sub(2, 1)];
+  const voided = [voidOf(1, 5)];
+  const frozen = JSON.stringify({ submissions, voided });
+  applyVoid({ submissions, voided }, voidOf(2, 6));
+  reconcileVoided(submissions, voided);
+  mergeVoided(voided, [voidOf(1, 7)]);
+  mergeSubmissions(submissions, [sub(1, 9)]);
+  assert.equal(JSON.stringify({ submissions, voided }), frozen);
+});
+test('activity_reset explains the reset and other reasons keep their messages', () => {
+  assert.equal(RESET_MESSAGE, '活動已重設，請重新選擇組別');
+  assert.deepEqual(getEntryNextStep({ data: { valid: false, reason: 'activity_reset' } }), {
+    screen: 'select-group', reason: 'activity_reset', message: RESET_MESSAGE,
+  });
+  const stored = getStoredEntryNextStep(true, { data: { valid: false, reason: 'activity_reset' } });
+  assert.equal(stored.message, RESET_MESSAGE);
+  assert.equal(stored.shouldExplain, true);
+  assert.equal(getEntryNextStep({ data: { valid: false, reason: 'group_removed' } }).message, '你原本的組別已被老師移除，請重新選擇組別');
+  assert.equal(getEntryNextStep({ data: { valid: false, reason: 'entry_reset' } }).message, '進場狀態已失效（例如伺服器重新啟動），請重新選擇組別');
+});
+
+test('formatRemaining follows the server time, rounds up and never goes below zero', () => {
+  const endsAt = '2026-11-27T01:01:00.000Z';
+  const server = (iso) => Date.parse(iso);
+  assert.equal(formatRemaining(endsAt, server('2026-11-27T01:00:00.000Z')), '1:00');
+  assert.equal(formatRemaining(endsAt, server('2026-11-27T01:00:59.001Z')), '0:01');
+  assert.equal(formatRemaining(endsAt, server('2026-11-27T01:01:00.000Z')), '0:00');
+  assert.equal(formatRemaining(endsAt, server('2026-11-27T02:00:00.000Z')), '0:00');
+  assert.equal(formatRemaining('2026-11-27T02:00:00.000Z', server('2026-11-27T01:00:00.000Z')), '60:00');
+  assert.equal(formatRemaining(null, server('2026-11-27T01:00:00.000Z')), '');
+  assert.equal(formatRemaining(endsAt, Number.NaN), '');
+});
+
+test('a device clock two minutes slow gives the same remaining time once the offset is applied', () => {
+  const endsAt = '2026-11-27T01:01:00.000Z';
+  const serverNow = Date.parse('2026-11-27T01:00:30.000Z');
+  const deviceNow = serverNow - 120_000;
+  const clockOffset = serverNow - deviceNow;
+  assert.equal(formatRemaining(endsAt, deviceNow + clockOffset), formatRemaining(endsAt, serverNow));
+  assert.equal(formatRemaining(endsAt, deviceNow + clockOffset), '0:30');
+});
+
+// add-student-fair-ranking-notice 1.1
+const fairRankingResults = (overrides = {}) => ({
+  fairRankingEnabled: true,
+  questions: [
+    {
+      questionId: 1,
+      blanks: [{ index: 0, prefix: '', prompt: '題目一' }],
+      winner: { groupName: '第 1 組', answers: ['H2O'], byFairRanking: false },
+      own: { place: 1, isWinner: true, answers: ['H2O'] },
+    },
+    {
+      questionId: 3,
+      blanks: [{ index: 0, prefix: '', prompt: '題目三' }],
+      winner: { groupName: '第 2 組', answers: ['牛頓'], byFairRanking: true },
+      own: { place: 2, isWinner: false, answers: ['伽利略'] },
+    },
+  ],
+  ...overrides,
+});
+
+test('fair ranking results show the session notice and mark re-judged questions', () => {
+  const result = buildResultsRows(fairRankingResults());
+  assert.equal(result.fairRankingNotice, '本場使用公平順位');
+  assert.equal(result.rows[0].winnerText, '第 1 組：H2O');
+  assert.equal(result.rows[1].winnerText, '第 2 組：牛頓（本題因公平順位改判）');
+  assert.equal(result.rows[1].ownText, '本組第 2 名：伽利略');
+  assert.equal(result.rows[1].isOwnWinner, false);
+});
+
+test('fair ranking disabled shows no notice or marks', () => {
+  const disabled = fairRankingResults({ fairRankingEnabled: false });
+  disabled.questions[1].winner.byFairRanking = false;
+  const result = buildResultsRows(disabled);
+  assert.equal(result.fairRankingNotice, '');
+  assert.deepEqual(result.rows.map(({ winnerText }) => winnerText), ['第 1 組：H2O', '第 2 組：牛頓']);
+});
+
+test('missing or non-true fair ranking fields are treated as false', () => {
+  for (const value of [undefined, null, 'true', 1]) {
+    const input = fairRankingResults({ fairRankingEnabled: value });
+    for (const question of input.questions) {
+      if (value === undefined) delete question.winner.byFairRanking;
+      else question.winner.byFairRanking = value;
+    }
+    if (value === undefined) delete input.fairRankingEnabled;
+    const result = buildResultsRows(input);
+    assert.equal(result.fairRankingNotice, '', String(value));
+    assert.ok(result.rows.every(({ winnerText }) => !winnerText.includes('公平順位')), String(value));
+  }
+  assert.equal(buildResultsRows(null).fairRankingNotice, '');
+  assert.equal(buildResultsRows({}).fairRankingNotice, '');
+});
+
+test('re-judged answers stay plain text', () => {
+  const input = fairRankingResults();
+  input.questions[1].winner.answers = ['<b>x</b>'];
+  assert.equal(buildResultsRows(input).rows[1].winnerText, '第 2 組：<b>x</b>（本題因公平順位改判）');
 });

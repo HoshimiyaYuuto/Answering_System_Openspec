@@ -39,6 +39,8 @@ function validateGroups(groups) {
 export function createGroupsEntry({ seed = [] } = {}) {
   let groups = Array.isArray(seed) && seed.length === 0 ? [] : validateGroups(seed);
   const entries = new Map();
+  // 重設活動前已進場、重設後尚未重新進場的學生（add-countdown-and-reset design 第 4 節）
+  const resetIds = new Set();
 
   function replaceGroups(nextGroups) {
     const validated = validateGroups(nextGroups);
@@ -86,6 +88,7 @@ export function createGroupsEntry({ seed = [] } = {}) {
         return { error: { status: 409, code: 'GROUP_CHANGE_NOT_ALLOWED', message: '僅能在準備中更換組別。' } };
       }
       entries.set(studentId, { groupId, removed: false });
+      resetIds.delete(studentId);
       return { data: { valid: true, studentId, group: { ...group }, phase } };
     },
     lookup(studentId, phase) {
@@ -93,11 +96,18 @@ export function createGroupsEntry({ seed = [] } = {}) {
         return { error: { status: 400, code: 'INVALID_STUDENT_ID', message: 'studentId 格式無效。' } };
       }
       const entry = entries.get(studentId);
-      if (!entry) return { data: { valid: false, studentId, reason: 'entry_reset' } };
+      if (!entry) {
+        const reason = resetIds.has(studentId) ? 'activity_reset' : 'entry_reset';
+        return { data: { valid: false, studentId, reason } };
+      }
       if (entry.removed) return { data: { valid: false, studentId, reason: 'group_removed' } };
       const group = groups.find((candidate) => candidate.id === entry.groupId);
       if (!group) return { data: { valid: false, studentId, reason: 'group_removed' } };
       return { data: { valid: true, studentId, group: { ...group }, phase } };
+    },
+    resetEntries() {
+      for (const studentId of entries.keys()) resetIds.add(studentId);
+      entries.clear();
     },
   };
 }

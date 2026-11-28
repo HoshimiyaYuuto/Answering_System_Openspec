@@ -57,7 +57,7 @@
 | D16 | 投影看板：搶答中只顯示階段、倒數、各組是否在線，**不顯示任何作答資訊（含送出數量）**；結束後可逐題或全部揭曉，逐題揭曉依題號順序 | Confirmed |
 | D17 | 老師在準備階段設定組數與組名 | Default |
 | D18 | 老師端需輸入密碼，密碼由環境變數 `TEACHER_PASSWORD` 設定；登入狀態存 HttpOnly cookie；同一來源 60 秒內錯 10 次暫時鎖定（429）。本組已於 `add-teacher-console` 實作（見 O5） | Default（本組已實作；SpecKit 詢問的回覆見第 10 節 Q1） |
-| D19 | 已結束後可重設活動回到準備中（需再確認）；組別保留，作答資料清空 | Default |
+| D19 | 已結束後可重設活動回到準備中（需再確認）；組別保留，作答資料清空。2026-11-25 與 SpecKit 談定（契約 v0.10）：重設時學生進場一併失效，已連線學生也回選組頁並顯示「活動已重設，請重新選擇組別」；組別保留，老師不用重新登入 | Default（細節兩組同意，v0.10） |
 | D20 | 組名 1–30 字元且不重複；倒數 10–3600 秒；組數上限 100（兩組已統一，見 O1） | Default（組數上限改為 100） |
 | D21 | 學生只能在準備中換組；重新整理或斷線重連後回到原組別與目前階段 | Default |
 | D22 | 題目敘述若匯入檔有則讀取並顯示於題號旁，沒有也不影響 | Default |
@@ -75,6 +75,7 @@
 - **O6 Google Sheets 寫回（D12）**：`export-guided-notes` 須支援「連結匯入 → 寫回線上試算表」。匯入時 server 私下保存試算表 ID 與工作表，供寫回使用；寫回前須重新讀取並以同一套表頭／題號規則重新定位，不可只信匯入時記下的儲存格位置（老師可能在匯入後插列），題號對不上時拒絕寫入並說明原因。服務帳號金鑰只放 `.env` 或 repo 外的檔案路徑，不進 repo。
 - **O7 開始搶答的前置條件**：開始前須至少一組、至少一題，否則 `409 NO_GROUPS`、`409 QUESTIONS_REQUIRED`，檢查順序為階段 → 組別 → 題目（與 SpecKit 的代碼一致，已寫入 `docs/api-contract.md`）。因此之後所有需要「搶答中」的測試與手動驗證，都要先登入、至少有一組一題（development 種子兩者皆有；也可用開發路由 `/api/dev/phase/搶答中` 略過登入與前置條件，僅限開發測試）。
 - **O4 學生端補充**：進場後組別記在瀏覽器本地；搶答中題號格顯示每題「未作答／草稿／已送出」；草稿只存本機，重新整理不消失，老師重設活動後清除。
+- **O8 介面語言切換（對齊 SpecKit 007）**：SpecKit 組已完成繁體中文／English 切換（他們 repo 的 `specs/007-i18n/spec.md`），本組補做以維持功能一致。行為：三個畫面右上角「中文／EN」、預設依瀏覽器語言（`en*` 英文，其餘繁中）、選擇記在 localStorage 且其他分頁跟著改、`<html lang>` 跟著改、伺服器錯誤依代碼在前端翻譯、組名／題目／答案不翻譯。server 回應、API 與共用契約 D1～D25 都不變。學生端由 `add-student-language-switch` 實作；教師控制台與投影看板由 `add-teacher-language-switch` 補上。
 
 ## 5. 能力拆分與優先級
 
@@ -91,13 +92,13 @@
 | question-results | `computeResults()` 純函式：由作答紀錄推導每題判定結果（先到先得、過濾作廢；公平順位與老師改選之後各自加入），供結果頁、監看、匯出共用 | P0 | 教師端成員 | 實作完成，已合併，待歸檔（`add-results-computation`） |
 | teacher-monitoring-results | 監看、結果（老師登入已由 teacher-auth／teacher-console 完成，不再屬於此能力） | P0 | 教師端成員（資料來源為 server） | 未開始 |
 | export-guided-notes | 寫回 xlsx | P0 | 教師端成員 | 未開始（須依 D12 v0.6 改為 Google Sheets 寫回，見 O6） |
-| countdown | 倒數與自動結束 | P1 | 學生端成員（server 計時、學生端顯示）；教師端成員（老師設定） | 未開始 |
+| countdown | 倒數與自動結束（含 D19 重設活動） | P1 | 學生端成員（server 計時、學生端顯示）；教師端成員（老師設定）。學生端成員無法開發，server 與控制台由教師端成員以 `add-countdown-and-reset` 接手；學生頁顯示由 `add-student-countdown-and-reset` 處理 | 實作中（`add-countdown-and-reset`） |
 | csv-export | 匯出活動結果 | P1 | 教師端成員 | 未開始（8 欄、本地時間） |
 | void-submission | D24 作廢 | P1 | 教師端成員（server 與操作畫面，學生端成員無法開發時接手）；學生端頁面提示由 `add-student-void-notice` 處理 | 實作中（`add-submission-void`） |
 | challenge-override | O3 結束後改選 | P1 | 學生端成員（最終勝者資料模型）；教師端成員（操作畫面與匯出） | 不做（兩組決定） |
 | question-groups | 題組匯入與整題送出（D10） | P2 | 教師端成員（匯入）；學生端成員（送出與學生端） | 匯入端已含在 guided-notes-import；送出端未開始 |
-| fair-ranking | D14 公平順位 | P2 | 學生端成員 | 未開始（含 D25 連鎖重判） |
-| projection-board | D16 投影看板 | P2 | 教師端成員 | 未開始 |
+| fair-ranking | D14 公平順位 | P2 | 學生端成員（由教師端成員接手） | 實作中（`add-fair-ranking`，含 D25 連鎖重判；學生頁提示另由 `add-student-fair-ranking-notice` 處理） |
+| projection-board | D16 投影看板 | P2 | 教師端成員 | 實作中（`add-projector-board`：`/teacher/board.html`、`GET /api/teacher/presence`） |
 | teacher-auth | D18 老師密碼驗證，取代各寫入端點的 loopback 檢查（O5） | P0 | 教師端成員 | 已歸檔（`add-teacher-console`） |
 | teacher-console | 教師控制台：登入畫面、活動狀態即時同步、開始與結束搶答（結束需確認）、組別與匯入依階段鎖定 | P0 | 教師端成員 | 已歸檔（`add-teacher-console`） |
 

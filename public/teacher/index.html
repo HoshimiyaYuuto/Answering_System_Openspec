@@ -34,6 +34,7 @@
     th, td { padding: 8px 10px; border-bottom: 1px solid #dde3ee; text-align: left; white-space: nowrap; }
     th { background: #f4f7fb; }
     [hidden] { display: none !important; }
+    .board-link { display: inline-block; margin: 4px 0 8px; padding: 10px 14px; border-radius: 10px; color: #2357d8; background: #e8efff; font-weight: 750; text-decoration: none; }
     .summary-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 12px 0 0; }
     .summary-grid dt { color: #5a6680; font-weight: 700; }
     .summary-grid dd { margin: 0; font-weight: 800; }
@@ -52,6 +53,16 @@
     .monitor-list ul { margin: 0; padding: 0 12px 12px 2em; line-height: 1.7; }
     .monitor-list .voided { color: #8a94a8; text-decoration: line-through; }
     .monitor-list .void-button { width: auto; min-height: 36px; margin: 0 0 0 8px; padding: 4px 12px; font-size: .9rem; vertical-align: middle; }
+    .countdown-setup { margin-top: 12px; }
+    .countdown-setup .check { display: flex; align-items: center; gap: 8px; margin: 0; }
+    .countdown-setup .check input { width: 22px; min-height: 22px; }
+    .fair-ranking-setup { margin-top: 12px; }
+    .fair-ranking-setup .check { display: flex; align-items: center; gap: 8px; margin: 0; }
+    .fair-ranking-setup .check input { width: 22px; min-height: 22px; }
+    .fair-ranking-setup .hint { margin: 4px 0 0; font-size: 0.9rem; color: #5a6680; line-height: 1.5; }
+    .countdown-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .countdown-fields label { margin-bottom: 4px; }
+    #countdown-remaining { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -81,16 +92,42 @@
     <div id="console-view" hidden>
       <section class="panel" aria-labelledby="session-title">
         <h2 id="session-title">活動狀態</h2>
+        <a id="board-link" class="board-link" href="/teacher/board.html" target="_blank" rel="noopener" hidden>開啟投影看板</a>
         <dl class="summary-grid">
           <dt>階段</dt><dd id="summary-phase" aria-live="polite">讀取中…</dd>
           <dt>組別與題目</dt><dd id="summary-counts"></dd>
+          <dt id="countdown-label" hidden>倒數</dt><dd id="countdown-remaining" aria-live="off" hidden></dd>
+          <dt id="fair-ranking-label" hidden>公平順位</dt><dd id="fair-ranking-state" hidden></dd>
         </dl>
+        <div class="countdown-setup">
+          <label class="check"><input id="countdown-enabled" type="checkbox"> 設定倒數（10 秒到 60 分鐘，時間到自動結束）</label>
+          <div id="countdown-fields" class="countdown-fields" hidden>
+            <div>
+              <label for="countdown-minutes">分</label>
+              <input id="countdown-minutes" type="number" inputmode="numeric" min="0" max="60" step="1" value="5">
+            </div>
+            <div>
+              <label for="countdown-seconds">秒</label>
+              <input id="countdown-seconds" type="number" inputmode="numeric" min="0" max="59" step="1" value="0">
+            </div>
+          </div>
+        </div>
+        <div class="fair-ranking-setup">
+          <label class="check"><input id="fair-ranking" type="checkbox" aria-describedby="fair-ranking-rule"> 啟用公平順位</label>
+          <p id="fair-ranking-rule" class="hint">某題第一個答案送達後 3 秒內送達的組別視為同一批，同批中已搶答成功題數較少的組別優先，相同再比送達順序。開始後不能變更。</p>
+        </div>
         <button id="start" type="button">開始搶答</button>
         <button id="end" type="button" class="danger">結束搶答</button>
         <div id="end-confirm" class="confirm" hidden>
           <p>確定要結束搶答嗎？結束後學生無法再送出，也不能重新開始。</p>
           <button id="end-confirm-yes" type="button" class="danger">確認結束</button>
           <button id="end-confirm-no" type="button" class="secondary">取消</button>
+        </div>
+        <button id="reset" type="button" class="secondary">重設活動</button>
+        <div id="reset-confirm" class="confirm" hidden>
+          <p>重設後會清空本場作答與學生進場，組別與題目保留。確定要重設嗎？</p>
+          <button id="reset-confirm-yes" type="button" class="danger">確認重設</button>
+          <button id="reset-confirm-no" type="button" class="secondary">取消</button>
         </div>
         <p id="session-message" class="message" role="status" aria-live="polite"></p>
       </section>

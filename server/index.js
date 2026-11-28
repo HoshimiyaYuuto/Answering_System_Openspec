@@ -14,7 +14,7 @@ import {
 import { createTeacherAuth, TeacherAuthError } from './teacher-auth.js';
 import { createSubmissions } from './submissions.js';
 import { buildStudentResults } from './student-results.js';
-import { computeResults } from './results.js';
+import { computeResults, FAIR_BATCH_MS } from './results.js';
 import {
   buildAnswerWorkbook,
   buildCellWrites,
@@ -26,6 +26,8 @@ import { createSheetsClient, loadServiceAccount } from './google-sheets.js';
 import { buildMonitor } from './teacher-monitor.js';
 import { buildResultsCsv } from './results-csv.js';
 
+// 批次結束後稍等再通知，避免計時器提早一點觸發時仍是判定中
+const BATCH_NOTICE_DELAY_MS = 50;
 const TEACHER_COOKIE = 'teacher_session';
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -84,6 +86,13 @@ export function createApplication({
   logger = console,
   now,
   submissions = createSubmissions(now ? { now: () => new Date(now()) } : {}),
+  // 倒數計時器可由測試注入（add-countdown-and-reset design 第 1 節）
+  scheduleTimeout = (callback, milliseconds) => {
+    const timer = setTimeout(callback, milliseconds);
+    timer.unref?.();
+    return timer;
+  },
+  cancelTimeout = (timer) => clearTimeout(timer),
 } = {}) {
   const app = express();
   const publicRoot = resolve('public');
@@ -94,6 +103,8 @@ export function createApplication({
   app.get('/', (_request, response) => response.redirect('/student/'));
   app.use('/student', express.static(resolve(publicRoot, 'student')));
   app.use('/teacher', express.static(resolve(publicRoot, 'teacher')));
+  // 三個畫面共用的介面語言核心（add-student-language-switch design 第 1 節）
+  app.use('/shared', express.static(resolve(publicRoot, 'shared')));
   app.use(express.json({ limit: '16kb' }));
   const isDevelopment = environment === 'development';
   const groups = createGroupsEntry({ seed: isDevelopment ? createDevelopmentGroupSeed() : [] });
@@ -104,7 +115,10 @@ export function createApplication({
       : [{ index: 0, prefix: '', prompt: `第 ${id} 題` }];
     return { id, prompt: blanks.map(({ prefix, prompt }) => `${prefix}${prompt}`).join(''), blanks };
   }) : [];
-  const session = { phase: '準備中', activityId: null, questions: developmentQuestions, groups };
+  const session = { phase: '準備中', activityId: null, countdownEndsAt: null, fairRankingEnabled: false, questions: developmentQuestions, groups };
+  let countdownTimer = null;
+  let batchNoticeTimer = null;
+  const currentTime = () => (now ? now() : Date.now());
   const guidedNotes = createGuidedNotesImport();
   const teacherAuth = createTeacherAuth({ password: teacherPassword, ...(now ? { now } : {}) });
   const eventClients = new Set();
@@ -151,13 +165,105 @@ export function createApplication({
       activityId: session.activityId,
       questionCount: session.questions.length,
       groupCount: session.groups.count(),
-      serverTime: new Date().toISOString(),
+      countdownEndsAt: session.countdownEndsAt,
+      fairRankingEnabled: session.fairRankingEnabled,
+      serverTime: new Date(currentTime()).toISOString(),
     };
   }
 
   function publishPhase() {
-    const payload = JSON.stringify({ phase: session.phase, serverTime: new Date().toISOString() });
+    const payload = JSON.stringify({
+      phase: session.phase,
+      countdownEndsAt: session.countdownEndsAt,
+      fairRankingEnabled: session.fairRankingEnabled,
+      serverTime: new Date(currentTime()).toISOString(),
+    });
     for (const client of eventClients) safeWrite(client.response, `event: phase\ndata: ${payload}\n\n`);
+  }
+
+  function clearCountdown() {
+    if (countdownTimer !== null) cancelTimeout(countdownTimer);
+    countdownTimer = null;
+    session.countdownEndsAt = null;
+  }
+
+  // 所有判定結果的呼叫端共用：已結束時所有批次立即判定（add-fair-ranking design 第 2 節）
+  function judgeResults(all) {
+    return computeResults({
+      questions: session.questions,
+      submissions: all,
+      fairRankingEnabled: session.fairRankingEnabled,
+      now: session.phase === '已結束' ? Infinity : currentTime(),
+    });
+  }
+
+  // 老師連線只收到「監看資料已改變」，內容不含作答；每次通知時才檢查 token，登出後就不再通知
+  function notifyTeachers(eventName = 'monitor') {
+    const notice = JSON.stringify({ serverTime: new Date(currentTime()).toISOString() });
+    for (const client of eventClients) {
+      if (client.teacherToken && teacherAuth.isValid(client.teacherToken)) {
+        safeWrite(client.response, `event: ${eventName}\ndata: ${notice}\n\n`);
+      }
+    }
+  }
+
+  // 在線狀態即時由學生連線推算，不另外存（add-projector-board design 第 1 節）
+  function groupPresence() {
+    const onlineIds = new Set();
+    for (const client of eventClients) {
+      if (!client.studentId) continue;
+      const entry = session.groups.lookup(client.studentId, session.phase);
+      if (entry.data?.valid) onlineIds.add(entry.data.group.id);
+    }
+    return session.groups.list()
+      .slice()
+      .sort((left, right) => left.id - right.id)
+      .map(({ id, name }) => ({ id, name, online: onlineIds.has(id) }));
+  }
+
+  // 只通知已登入老師「在線狀態已改變」，內容只有 server 時間（design 第 2 節）
+  function notifyPresence() {
+    notifyTeachers('presence');
+  }
+
+  function clearBatchNotice() {
+    if (batchNoticeTimer !== null) cancelTimeout(batchNoticeTimer);
+    batchNoticeTimer = null;
+  }
+
+  // 公平順位的 3 秒批次結束時通知老師；同時最多一個計時器（add-fair-ranking design 第 3 節）
+  function scheduleBatchNotice() {
+    clearBatchNotice();
+    if (!session.fairRankingEnabled || session.phase !== '搶答中') return;
+    const firstAt = new Map();
+    for (const submission of submissions.listSubmissions()) {
+      if (submission.status !== 'valid') continue;
+      const current = firstAt.get(submission.questionId);
+      if (!current || submission.rank < current.rank) firstAt.set(submission.questionId, submission);
+    }
+    const current = currentTime();
+    let next = Infinity;
+    for (const { submittedAt } of firstAt.values()) {
+      const closesAt = Date.parse(submittedAt) + FAIR_BATCH_MS;
+      if (closesAt > current && closesAt < next) next = closesAt;
+    }
+    if (next === Infinity) return;
+    batchNoticeTimer = scheduleTimeout(() => {
+      batchNoticeTimer = null;
+      if (session.phase !== '搶答中') return;
+      notifyTeachers();
+      scheduleBatchNotice();
+    }, next - current + BATCH_NOTICE_DELAY_MS);
+  }
+
+  // 老師結束與倒數歸零共用；不在搶答中時不動作，所以只會結束一次
+  function endSession() {
+    if (session.phase !== '搶答中') return false;
+    clearCountdown();
+    clearBatchNotice();
+    session.phase = '已結束';
+    publishPhase();
+    return true;
   }
 
   function safeWrite(response, chunk) {
@@ -181,13 +287,8 @@ export function createApplication({
         safeWrite(client.response, `event: submission\ndata: ${payload}\n\n`);
       }
     }
-    // 老師連線只收到「監看資料已改變」，內容不含作答；每次送出時才檢查 token，登出後就不再通知
-    const notice = JSON.stringify({ serverTime: new Date().toISOString() });
-    for (const client of eventClients) {
-      if (client.teacherToken && teacherAuth.isValid(client.teacherToken)) {
-        safeWrite(client.response, `event: monitor\ndata: ${notice}\n\n`);
-      }
-    }
+    notifyTeachers();
+    scheduleBatchNotice();
   });
 
   // 作廢只通知被作廢組別的學生連線（不含順位）與已登入老師的連線（D24，design 第 4 節）
@@ -203,15 +304,8 @@ data: ${payload}
 `);
       }
     }
-    const notice = JSON.stringify({ serverTime: new Date().toISOString() });
-    for (const client of eventClients) {
-      if (client.teacherToken && teacherAuth.isValid(client.teacherToken)) {
-        safeWrite(client.response, `event: monitor
-data: ${notice}
-
-`);
-      }
-    }
+    notifyTeachers();
+    scheduleBatchNotice();
   });
 
   app.get('/api/session', (_request, response) => {
@@ -230,6 +324,7 @@ data: ${notice}
     }
     try {
       const result = operation();
+      notifyPresence();
       return response.json({ data: { groups: result } });
     } catch (error) {
       if (error instanceof InvalidGroupsError) {
@@ -242,12 +337,17 @@ data: ${notice}
   app.put('/api/groups', requireTeacher, (request, response) => configureGroups(request, response, () => session.groups.replace(request.body?.groups)));
   app.post('/api/groups/generate', requireTeacher, (request, response) => configureGroups(request, response, () => session.groups.generate(request.body?.count)));
 
+  app.get('/api/teacher/presence', requireTeacher, (_request, response) => {
+    response.json({ data: { groups: groupPresence(), serverTime: new Date(currentTime()).toISOString() } });
+  });
+
   app.put('/api/student/entry', (request, response) => {
     const result = session.groups.enter(request.body?.studentId, request.body?.groupId, session.phase);
     if (result.error) {
       const { status, ...error } = result.error;
       return response.status(status).json({ error });
     }
+    notifyPresence();
     response.json({ data: result.data });
   });
 
@@ -323,9 +423,12 @@ data: ${notice}
     if (session.phase !== '已結束') {
       return response.status(409).json({ error: { code: 'RESULTS_NOT_AVAILABLE', message: '活動結束後才能讀取結果。' } });
     }
+    const all = submissions.listSubmissions();
     const results = buildStudentResults({
       questions: session.questions,
-      submissions: submissions.listSubmissions(),
+      submissions: all,
+      results: judgeResults(all),
+      fairRankingEnabled: session.fairRankingEnabled,
       groups: session.groups.list(),
       groupId: entry.group.id,
     });
@@ -353,7 +456,7 @@ data: ${notice}
 
   function currentWinners() {
     const all = submissions.listSubmissions();
-    return winningAnswers(computeResults({ questions: session.questions, submissions: all, now: Date.now() }), all);
+    return winningAnswers(judgeResults(all), all);
   }
 
   app.get('/api/teacher/guided-notes/export', requireTeacher, async (_request, response) => {
@@ -506,7 +609,7 @@ data: ${notice}
 
   app.get('/api/teacher/monitor', requireTeacher, (_request, response) => {
     const all = submissions.listSubmissions();
-    const results = computeResults({ questions: session.questions, submissions: all, now: Date.now() });
+    const results = judgeResults(all);
     response.json({
       data: buildMonitor({ phase: session.phase, questions: session.questions, groups: session.groups.list(), submissions: all, results }),
     });
@@ -542,8 +645,14 @@ data: ${notice}
       return sendExportError(response, 'EXPORT_NOT_ALLOWED', '活動結束後才能匯出。', 409);
     }
     const all = submissions.listSubmissions();
-    const results = computeResults({ questions: session.questions, submissions: all, now: Date.now() });
-    const csv = buildResultsCsv({ questions: session.questions, groups: session.groups.list(), submissions: all, results });
+    const results = judgeResults(all);
+    const csv = buildResultsCsv({
+      questions: session.questions,
+      groups: session.groups.list(),
+      submissions: all,
+      results,
+      fairRankingEnabled: session.fairRankingEnabled,
+    });
     const fileName = exportFileName(guidedNotes.currentSummary()?.source?.name, 'csv');
     response.set({
       'Content-Type': 'text/csv; charset=utf-8',
@@ -582,17 +691,19 @@ data: ${notice}
       ...(asTeacher ? { teacherToken: readCookie(request, TEACHER_COOKIE) } : {}),
     };
     eventClients.add(client);
+    if (client.studentId) notifyPresence();
 
     const heartbeat = setInterval(() => {
       safeWrite(response, `event: heartbeat\ndata: ${JSON.stringify({ serverTime: new Date().toISOString() })}\n\n`);
     }, 15_000);
     response.on('close', () => {
       clearInterval(heartbeat);
-      eventClients.delete(client);
+      const wasConnected = eventClients.delete(client);
+      if (client.studentId && wasConnected) notifyPresence();
     });
   });
 
-  app.post('/api/session/start', requireTeacher, (_request, response) => {
+  app.post('/api/session/start', requireTeacher, (request, response) => {
     if (session.phase !== '準備中') {
       return response.status(409).json({
         error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能開啟搶答。' },
@@ -604,21 +715,76 @@ data: ${notice}
     if (session.questions.length === 0) {
       return response.status(409).json({ error: { code: 'QUESTIONS_REQUIRED', message: '請先匯入學習單。' } });
     }
-    session.activityId = randomUUID();
+    const countdownSeconds = request.body?.countdownSeconds;
+    const hasCountdown = countdownSeconds !== undefined && countdownSeconds !== null;
+    if (hasCountdown && !(Number.isInteger(countdownSeconds) && countdownSeconds >= 10 && countdownSeconds <= 3600)) {
+      return response.status(400).json({
+        error: { code: 'COUNTDOWN_OUT_OF_RANGE', message: '倒數時間需介於 10 秒到 60 分鐘。' },
+      });
+    }
+    const fairRankingEnabled = request.body?.fairRankingEnabled === undefined ? false : request.body.fairRankingEnabled;
+    if (typeof fairRankingEnabled !== 'boolean') {
+      return response.status(400).json({
+        error: { code: 'INVALID_FAIR_RANKING', message: '公平順位設定必須是是或否。' },
+      });
+    }
+    clearCountdown();
+    clearBatchNotice();
+    session.fairRankingEnabled = fairRankingEnabled;
+    const activityId = randomUUID();
+    session.activityId = activityId;
     session.phase = '搶答中';
+    if (hasCountdown) {
+      session.countdownEndsAt = new Date(currentTime() + countdownSeconds * 1000).toISOString();
+      countdownTimer = scheduleTimeout(() => {
+        countdownTimer = null;
+        if (session.activityId === activityId) endSession();
+      }, countdownSeconds * 1000);
+    }
     publishPhase();
-    response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
+    response.json({
+      data: {
+        phase: session.phase,
+        countdownEndsAt: session.countdownEndsAt,
+        fairRankingEnabled: session.fairRankingEnabled,
+        serverTime: new Date(currentTime()).toISOString(),
+      },
+    });
   });
 
   app.post('/api/session/end', requireTeacher, (_request, response) => {
-    if (session.phase !== '搶答中') {
+    if (!endSession()) {
       return response.status(409).json({
         error: { code: 'INVALID_PHASE_TRANSITION', message: '目前階段不能結束搶答。' },
       });
     }
-    session.phase = '已結束';
+    response.json({ data: { phase: session.phase, serverTime: new Date(currentTime()).toISOString() } });
+  });
+
+  // 已結束後重設回準備中：清空作答與進場，保留組別、題目與老師登入（add-countdown-and-reset design 第 3、5 節）
+  app.post('/api/session/reset', requireTeacher, (_request, response) => {
+    if (session.phase !== '已結束') {
+      return response.status(409).json({
+        error: { code: 'INVALID_PHASE_TRANSITION', message: '只能在已結束時重設活動。' },
+      });
+    }
+    submissions.clear();
+    session.groups.resetEntries();
+    session.activityId = null;
+    clearCountdown();
+    clearBatchNotice();
+    session.fairRankingEnabled = false;
+    session.phase = '準備中';
+    const resetPayload = JSON.stringify({ serverTime: new Date(currentTime()).toISOString() });
+    for (const client of [...eventClients]) {
+      if (!client.studentId) continue;
+      safeWrite(client.response, `event: reset\ndata: ${resetPayload}\n\n`);
+      eventClients.delete(client);
+      client.response.end();
+    }
     publishPhase();
-    response.json({ data: { phase: session.phase, serverTime: new Date().toISOString() } });
+    notifyPresence();
+    response.json({ data: { phase: session.phase, serverTime: new Date(currentTime()).toISOString() } });
   });
 
   if (isDevelopment) {
@@ -632,6 +798,7 @@ data: ${notice}
       if (request.params.phase === '搶答中' && session.phase !== '搶答中') {
         session.activityId = randomUUID();
       }
+      if (request.params.phase !== '搶答中') clearCountdown();
       session.phase = request.params.phase;
       publishPhase();
       response.json({ data: sessionSummary() });

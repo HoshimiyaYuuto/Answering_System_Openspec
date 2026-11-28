@@ -1,5 +1,24 @@
-import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, isReconnecting, isStaleRequest, mergeSubmissions, validateAnswers } from './logic.js';
+import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, isReconnecting, isStaleRequest, mergeSubmissions, mergeVoided, reconcileVoided, applyVoid, validateAnswers, formatRemaining } from './logic.js';
 import { createDraftStore } from './drafts.js';
+import {
+  applyDocumentLanguage,
+  applyStaticText,
+  createTranslator,
+  detectLanguage,
+  mountLanguageSwitch,
+  readStoredLanguage,
+  storeLanguage,
+  translateError,
+  watchLanguage,
+} from '../shared/i18n.js';
+import { STUDENT_MESSAGES } from './messages.js';
+
+// 介面語言（add-student-language-switch design 第 4、5 節）：啟動時決定語言；
+// 切換時先存草稿再重新載入，走既有的「重新整理後還原」流程
+const language = detectLanguage(readStoredLanguage(), navigator.languages);
+const t = createTranslator(STUDENT_MESSAGES, language);
+applyDocumentLanguage(language, t('page.title'));
+applyStaticText(document, t);
 
 const selection = document.querySelector('#selection');
 const waiting = document.querySelector('#waiting');
@@ -16,10 +35,12 @@ const retryQuestionsButton = document.querySelector('#retry-questions');
 const ended = document.querySelector('#ended');
 const resultsSection = document.querySelector('#results-section');
 const resultsSummary = document.querySelector('#results-summary');
+const resultsFairRanking = document.querySelector('#results-fair-ranking');
 const resultsList = document.querySelector('#results-list');
 const resultsLoadingMessage = document.querySelector('#results-loading');
 const resultsErrorMessage = document.querySelector('#results-error');
 const retryResultsButton = document.querySelector('#results-retry');
+const countdownDisplay = document.querySelector('#countdown');
 
 let draftStorage;
 try {
@@ -30,8 +51,22 @@ try {
 const drafts = createDraftStore(draftStorage);
 drafts.setActivityId(null);
 
+function reloadWithLanguage(next, { store = true } = {}) {
+  if (next === language) return;
+  if (store) storeLanguage(next);
+  saveCurrentDraft();
+  window.location.reload();
+}
+
+mountLanguageSwitch(document.querySelector('#language-switch'), {
+  language,
+  label: t('language.label'),
+  onChange: (next) => reloadWithLanguage(next),
+});
+watchLanguage((next) => reloadWithLanguage(next, { store: false }));
+
 const reconnectBanner = document.createElement('p');
-reconnectBanner.textContent = '重新連線中…';
+reconnectBanner.textContent = t('common.reconnecting');
 reconnectBanner.setAttribute('role', 'status');
 reconnectBanner.setAttribute('aria-live', 'polite');
 reconnectBanner.hidden = true;
@@ -39,7 +74,7 @@ document.querySelector('main').prepend(reconnectBanner);
 
 const changeGroupButton = document.createElement('button');
 changeGroupButton.type = 'button';
-changeGroupButton.textContent = '更換組別';
+changeGroupButton.textContent = t('waiting.changeGroup');
 waiting.append(changeGroupButton);
 
 let studentId;
@@ -60,6 +95,12 @@ let closedEntryRetrySource = null;
 let closedEntryCheckSource = null;
 let loadedQuestions = [];
 let loadedSubmissions = [];
+// 本組已被老師作廢且尚未重送的題目 [{ questionId, voidedAt }]（add-student-void-notice）
+let loadedVoided = [];
+// 倒數以 server 時間計算：記下 server 與本機時鐘的差（add-student-countdown-and-reset design 第 2 節）
+let countdownEndsAt = null;
+let clockOffset = 0;
+let countdownTimer = null;
 let activeQuestionId = null;
 let answeringView = 'grid';
 let isSubmitting = false;
@@ -102,7 +143,7 @@ async function requestJson(path, options) {
   const response = await fetch(path, options);
   const body = await response.json();
   if (!response.ok) {
-    const error = new Error(body?.error?.message || '伺服器發生錯誤。');
+    const error = new Error(translateError(t, body?.error?.code, body?.error?.message || t('error.generic')));
     error.code = body?.error?.code;
     error.status = response.status;
     throw error;
@@ -118,6 +159,7 @@ function showSelection(message = '') {
   closedEntryCheckSource = null;
   clearResultsView();
   loadedSubmissions = [];
+  loadedVoided = [];
   currentEntry = null;
   ensureEventSource();
   waiting.hidden = true;
@@ -128,13 +170,13 @@ function showSelection(message = '') {
 }
 
 function updateWaitingView() {
-  const display = getPhaseDisplay(phase);
-  phaseText.textContent = `目前階段：${phase}。${display.message}`;
+  const display = getPhaseDisplay(phase, t);
+  phaseText.textContent = t('waiting.phaseLine', { phase: t(`phase.${phase}`), message: display.message });
   changeGroupButton.hidden = !display.canChangeGroup;
 }
 
 function showEntryResult(response) {
-  const next = getEntryNextStep(response);
+  const next = getEntryNextStep(response, t);
   if (next.screen === 'waiting') {
     clearClosedEntryRetry();
     if (currentEntry?.group?.id !== next.entry.group.id) {
@@ -142,6 +184,7 @@ function showEntryResult(response) {
       synchronizationRequestId += 1;
       submissionsSnapshotRequestId += 1;
       loadedSubmissions = [];
+      loadedVoided = [];
     }
     currentEntry = next.entry;
     groupName.textContent = next.entry.group.name;
@@ -173,6 +216,26 @@ function showPhaseScreen() {
     activeQuestionId = null;
     loadStudentResults();
   }
+  renderCountdown();
+}
+
+function recordServerTime(data) {
+  if (!data || typeof data !== 'object') return;
+  const serverTime = Date.parse(data.serverTime);
+  if (Number.isFinite(serverTime)) clockOffset = serverTime - Date.now();
+  if ('countdownEndsAt' in data) countdownEndsAt = typeof data.countdownEndsAt === 'string' ? data.countdownEndsAt : null;
+  renderCountdown();
+}
+
+function renderCountdown() {
+  const running = !answering.hidden && phase === '搶答中' && countdownEndsAt !== null;
+  countdownDisplay.hidden = !running;
+  countdownDisplay.textContent = running ? t('countdown.remaining', { time: formatRemaining(countdownEndsAt, Date.now() + clockOffset) }) : '';
+  if (running && countdownTimer === null) countdownTimer = setInterval(renderCountdown, 1000);
+  if (!running && countdownTimer !== null) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
 }
 
 function clearResultsView() {
@@ -186,6 +249,8 @@ function clearResultsView() {
   resultsSection.hidden = true;
   resultsSummary.textContent = '';
   resultsSummary.hidden = true;
+  resultsFairRanking.textContent = '';
+  resultsFairRanking.hidden = true;
   resultsList.replaceChildren();
   resultsList.hidden = true;
   resultsLoadingMessage.hidden = true;
@@ -195,13 +260,15 @@ function clearResultsView() {
 }
 
 function renderStudentResults(results) {
-  const view = buildResultsRows(results);
+  const view = buildResultsRows(results, t);
   resultsSummary.textContent = view.summary.text;
   resultsSummary.hidden = false;
+  resultsFairRanking.textContent = view.fairRankingNotice;
+  resultsFairRanking.hidden = view.fairRankingNotice === '';
   resultsList.replaceChildren();
   for (const row of view.rows) {
     const item = document.createElement('li');
-    item.textContent = `${row.label}：${row.winnerText}；${row.ownText}`;
+    item.textContent = t('results.row', { label: row.label, winner: row.winnerText, own: row.ownText });
     resultsList.append(item);
   }
   resultsList.hidden = false;
@@ -252,17 +319,17 @@ async function loadStudentResults() {
       body = null;
     }
     if (!response.ok) {
-      const error = new Error(body?.error?.message || '伺服器發生錯誤。');
+      const error = new Error(translateError(t, body?.error?.code, body?.error?.message || t('error.generic')));
       error.status = response.status;
       error.code = body?.error?.code;
       throw error;
     }
-    if (!Array.isArray(body?.data?.questions)) throw new Error('伺服器回應格式錯誤。');
+    if (!Array.isArray(body?.data?.questions)) throw new Error(t('error.badResponse'));
     if (isStaleRequest(requestId, resultsRequestId)) return;
-    renderStudentResults({ questions: body.data.questions });
+    renderStudentResults({ questions: body.data.questions, fairRankingEnabled: body.data.fairRankingEnabled });
   } catch (error) {
     if (isStaleRequest(requestId, resultsRequestId)) return;
-    const next = getResultsLoadNextStep(Number.isInteger(error.status) ? error.status : null);
+    const next = getResultsLoadNextStep(Number.isInteger(error.status) ? error.status : null, t);
     if (next.action === 'restore-entry') {
       clearResultsView();
       await restoreEntry();
@@ -292,14 +359,10 @@ function renderQuestionGrid(questions, submissions) {
     const hasSubmission = submissions.some((submission) => submission.questionId === question.id);
     if (hasSubmission) drafts.remove(studentId, question.id);
     const hasDraft = drafts.has(studentId, question.id, question.blanks.length);
-    const statusByKey = {
-      unanswered: '未作答',
-      draft: '草稿',
-      submitted: '已送出',
-    };
+    const questionStatus = getQuestionStatus(hasSubmission, hasDraft, isVoidedQuestion(question.id));
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = `第 ${question.id} 題：${statusByKey[getQuestionStatus(hasSubmission, hasDraft)]}`;
+    button.textContent = t('grid.button', { id: question.id, status: t(`grid.status.${questionStatus}`) });
     button.addEventListener('click', () => openQuestion(question.id));
     questionGrid.append(button);
   }
@@ -340,19 +403,20 @@ function renderQuestionPage(question, options = {}) {
   questionGrid.hidden = true;
 
   const title = document.createElement('h3');
-  title.textContent = `第 ${question.id} 題`;
+  title.textContent = t('question.title', { id: question.id });
   questionPage.append(title);
 
   const message = document.createElement('p');
   message.className = 'message';
   message.setAttribute('role', 'status');
   message.setAttribute('aria-live', 'polite');
-  message.textContent = options.message || (locked ? '已送出' : '');
+  const voidedNotice = !locked && isVoidedQuestion(question.id) ? t('question.voidedNotice') : '';
+  message.textContent = options.message || (locked ? t('question.submitted') : voidedNotice);
   questionPage.append(message);
   const validationMessages = [];
 
   blanks.forEach((blank, index) => {
-    const blankLabel = [blank.prefix, blank.prompt].filter(Boolean).join(' ') || `第 ${question.id} 題第 ${index + 1} 格答案`;
+    const blankLabel = [blank.prefix, blank.prompt].filter(Boolean).join(' ') || t('question.blankLabel', { id: question.id, n: index + 1 });
     const label = document.createElement('label');
     label.htmlFor = `answer-${question.id}-${index}`;
     label.textContent = blankLabel;
@@ -386,12 +450,12 @@ function renderQuestionPage(question, options = {}) {
     for (const error of options.validationErrors) {
       if (error.index !== null && validationMessages[error.index]) {
         validationMessages[error.index].textContent = error.reason === 'too-long'
-          ? '答案不可超過 200 字。'
+          ? t('validation.tooLong')
           : error.reason === 'empty'
-            ? '請填寫此空格。'
-            : '答案格式錯誤。';
+            ? t('validation.empty')
+            : t('validation.invalid');
       } else if (error.reason === 'wrong-count') {
-        message.textContent = '請填寫所有空格。';
+        message.textContent = t('validation.allBlanks');
       }
     }
   }
@@ -399,7 +463,7 @@ function renderQuestionPage(question, options = {}) {
   if (!locked) {
     questionSubmitButton = document.createElement('button');
     questionSubmitButton.type = 'button';
-    questionSubmitButton.textContent = isSubmitting ? '送出中…' : '送出答案';
+    questionSubmitButton.textContent = isSubmitting ? t('question.submitting') : t('question.submit');
     questionSubmitButton.disabled = isSubmitting;
     questionSubmitButton.addEventListener('click', submitCurrentQuestion);
     questionPage.append(questionSubmitButton);
@@ -408,7 +472,7 @@ function renderQuestionPage(question, options = {}) {
   questionBackButton = document.createElement('button');
   questionBackButton.type = 'button';
   questionBackButton.className = 'secondary';
-  questionBackButton.textContent = '返回題號格';
+  questionBackButton.textContent = t('question.back');
   questionBackButton.disabled = isSubmitting;
   questionBackButton.addEventListener('click', () => {
     saveCurrentDraft();
@@ -431,8 +495,7 @@ async function refreshSubmissions() {
   const response = await requestJson(`/api/student/submissions?${query}`);
   if (isStaleRequest(requestId, submissionsSnapshotRequestId)
     || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return loadedSubmissions;
-  const submissions = projectSubmissions(response?.data?.submissions);
-  loadedSubmissions = mergeSubmissions(loadedSubmissions, submissions);
+  applyGroupSnapshot(response?.data);
   renderQuestionGrid(loadedQuestions, loadedSubmissions);
   return loadedSubmissions;
 }
@@ -448,15 +511,46 @@ function isValidQuestionId(questionId) {
     || (typeof questionId === 'string' && questionId.length > 0);
 }
 
+// 快照合併：作答保留較新的，作廢保留較晚的，再依時間決定同題誰有效（design 第 1、3 節）
+function applyGroupSnapshot(data) {
+  const submissions = projectSubmissions(data?.submissions);
+  const voided = projectVoided(data?.voided);
+  const next = reconcileVoided(mergeSubmissions(loadedSubmissions, submissions), mergeVoided(loadedVoided, voided));
+  loadedSubmissions = next.submissions;
+  loadedVoided = next.voided;
+}
+
+// 舊版 server 沒有 voided 欄位時視為空陣列
+function projectVoided(voided) {
+  if (voided === undefined) return [];
+  if (!Array.isArray(voided)) throw new Error(t('error.badResponse'));
+  return voided.map((item) => {
+    if (!item || typeof item !== 'object' || !isValidQuestionId(item.questionId) || typeof item.voidedAt !== 'string') {
+      throw new Error(t('error.badResponse'));
+    }
+    return { questionId: item.questionId, voidedAt: item.voidedAt };
+  });
+}
+
+function questionLockState(questionId) {
+  const submission = loadedSubmissions.find((item) => item.questionId === questionId);
+  if (submission) return `submitted:${submission.submittedAt}`;
+  return isVoidedQuestion(questionId) ? 'voided' : 'open';
+}
+
+function isVoidedQuestion(questionId) {
+  return loadedVoided.some((item) => item.questionId === questionId);
+}
+
 function projectSubmissions(submissions) {
-  if (!Array.isArray(submissions)) throw new Error('伺服器回應格式錯誤。');
+  if (!Array.isArray(submissions)) throw new Error(t('error.badResponse'));
   return submissions.map((submission) => {
     if (!submission || typeof submission !== 'object'
       || !isValidQuestionId(submission.questionId)
       || !Array.isArray(submission.answers)
       || !submission.answers.every((answer) => typeof answer === 'string')
       || typeof submission.submittedAt !== 'string') {
-      throw new Error('伺服器回應格式錯誤。');
+      throw new Error(t('error.badResponse'));
     }
     return {
       questionId: submission.questionId,
@@ -481,7 +575,7 @@ async function submitCurrentQuestion() {
   const questionId = activeQuestionId;
   isSubmitting = true;
   setQuestionControlsDisabled(true);
-  if (questionSubmitButton) questionSubmitButton.textContent = '送出中…';
+  if (questionSubmitButton) questionSubmitButton.textContent = t('question.submitting');
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -501,12 +595,13 @@ async function submitCurrentQuestion() {
       answers: result.answers,
       submittedAt: data.submittedAt,
     });
+    clearResolvedVoids();
     drafts.remove(studentId, questionId);
     renderQuestionGrid(loadedQuestions, loadedSubmissions);
     if (answeringView === 'question' && activeQuestionId === questionId) renderQuestionPage(question);
   } catch (caught) {
     const error = timedOut
-      ? Object.assign(new Error('伺服器沒有回應'), { name: 'AbortError' })
+      ? Object.assign(new Error(t('error.noResponse')), { name: 'AbortError' })
       : caught;
     if (error instanceof TypeError && !error.code) error.type = 'network';
     const next = getSubmitErrorNextStep(error);
@@ -517,7 +612,7 @@ async function submitCurrentQuestion() {
         if (matching) {
           drafts.remove(studentId, questionId);
           if (answeringView === 'question' && activeQuestionId === questionId) {
-            renderQuestionPage(question, { message: '本組已由其他裝置送出' });
+            renderQuestionPage(question, { message: t('question.submittedElsewhere') });
           }
         } else {
           messageForCurrentQuestion(error.message);
@@ -530,6 +625,7 @@ async function submitCurrentQuestion() {
       try {
         const session = await requestJson('/api/session');
         phase = session.data.phase;
+        recordServerTime(session.data);
         if (phase === '已結束') showPhaseScreen();
         else messageForCurrentQuestion(error.message);
       } catch (refreshError) {
@@ -537,13 +633,13 @@ async function submitCurrentQuestion() {
       }
     } else if (next.action === 'restore-entry') {
       saveCurrentDraft();
-      showSelection('進場狀態已失效，請重新選擇組別。');
+      showSelection(t('entry.expired'));
     } else if (next.action === 'reload-questions') {
       saveCurrentDraft();
       await loadAnsweringData();
       messageForCurrentQuestion(error.message);
     } else if (next.action === 'retry') {
-      messageForCurrentQuestion('伺服器沒有回應');
+      messageForCurrentQuestion(t('error.noResponse'));
     } else {
       messageForCurrentQuestion(error.message);
     }
@@ -554,7 +650,7 @@ async function submitCurrentQuestion() {
       const isLocked = loadedSubmissions.some((item) => item.questionId === activeQuestionId);
       setQuestionControlsDisabled(isLocked);
       if (questionBackButton) questionBackButton.disabled = false;
-      if (questionSubmitButton && !isLocked) questionSubmitButton.textContent = '送出答案';
+      if (questionSubmitButton && !isLocked) questionSubmitButton.textContent = t('question.submit');
     }
   }
 }
@@ -570,7 +666,7 @@ async function loadAnsweringData() {
   const requestedStudentId = studentId;
   const requestedGroupId = currentEntry.group?.id;
   const snapshotRequestId = ++submissionsSnapshotRequestId;
-  answeringMessage.textContent = '載入題目中…';
+  answeringMessage.textContent = t('answering.loading');
   answeringMessage.hidden = false;
   questionGrid.hidden = true;
   retryQuestionsButton.hidden = true;
@@ -584,12 +680,15 @@ async function loadAnsweringData() {
     if (isStaleRequest(requestId, answeringRequestId)
       || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return;
     const questions = questionsResponse?.data?.questions;
-    const submissions = projectSubmissions(submissionsResponse?.data?.submissions);
-    if (!Array.isArray(questions)) throw new Error('伺服器回應格式錯誤。');
+    // 先檢查格式，格式錯誤時不改任何狀態
+    projectSubmissions(submissionsResponse?.data?.submissions);
+    projectVoided(submissionsResponse?.data?.voided);
+    if (!Array.isArray(questions)) throw new Error(t('error.badResponse'));
     updateActivityId(sessionResponse?.data);
+    recordServerTime(sessionResponse?.data);
     loadedQuestions = questions;
     if (!isStaleRequest(snapshotRequestId, submissionsSnapshotRequestId)) {
-      loadedSubmissions = mergeSubmissions(loadedSubmissions, submissions);
+      applyGroupSnapshot(submissionsResponse?.data);
     }
     renderQuestionGrid(loadedQuestions, loadedSubmissions);
     answeringMessage.textContent = '';
@@ -600,10 +699,10 @@ async function loadAnsweringData() {
     if (isStaleRequest(requestId, answeringRequestId)
       || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return;
     if (error.code === 'STUDENT_NOT_ENTERED') {
-      showSelection('進場狀態已失效，請重新選擇組別。');
+      showSelection(t('entry.expired'));
       return;
     }
-    answeringMessage.textContent = '無法載入題目，請稍後再試';
+    answeringMessage.textContent = t('answering.loadFailed');
     answeringMessage.hidden = false;
     retryQuestionsButton.hidden = false;
   }
@@ -611,14 +710,14 @@ async function loadAnsweringData() {
 
 async function loadGroups(message = '') {
   const requestId = ++groupsRequestId;
-  status.textContent = '載入中…';
+  status.textContent = t('selection.loading');
   groupList.replaceChildren();
   refreshButton.hidden = true;
   try {
     const { data } = await requestJson('/api/groups');
     if (isStaleRequest(requestId, groupsRequestId)) return;
     if (!data.groups.length) {
-      status.textContent = '老師尚未設定組別';
+      status.textContent = t('selection.noGroups');
       refreshButton.hidden = false;
       return;
     }
@@ -641,7 +740,7 @@ async function restoreEntry() {
   if (!studentId) return null;
   try {
     const entry = await requestJson(`/api/student/entry?studentId=${encodeURIComponent(studentId)}`);
-    const next = getStoredEntryNextStep(storedStudentId, entry);
+    const next = getStoredEntryNextStep(storedStudentId, entry, t);
     if (next.screen === 'waiting') showEntryResult(entry);
     else showSelection(next.shouldExplain ? next.message : '');
     return entry;
@@ -664,7 +763,7 @@ async function enterGroup(groupId, button) {
     if (isNewStudent) persistStudentId(pendingStudentId);
     showEntryResult(response);
   } catch (error) {
-    if (error.code === 'GROUP_NOT_FOUND') await loadGroups('這個組別已不存在');
+    if (error.code === 'GROUP_NOT_FOUND') await loadGroups(t('selection.groupGone'));
     else if (error.code === 'GROUP_CHANGE_NOT_ALLOWED' && changingGroup) {
       changingGroup = false;
       await restoreEntry();
@@ -693,16 +792,18 @@ async function synchronizeFromServer() {
     if (currentEntry?.valid) {
       updateActivityId(session?.data);
       const phaseChanged = phase !== session.data.phase;
+      recordServerTime(session?.data);
       if (phaseChanged && session.data.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
       phase = session.data.phase;
+      const before = activeQuestionId !== null ? questionLockState(activeQuestionId) : null;
       if (!isStaleRequest(submissionsRequestId, submissionsSnapshotRequestId)) {
-        const submissions = projectSubmissions(submissionsResponse?.data?.submissions);
-        loadedSubmissions = mergeSubmissions(loadedSubmissions, submissions);
+        applyGroupSnapshot(submissionsResponse?.data);
       }
       renderQuestionGrid(loadedQuestions, loadedSubmissions);
       if (answeringView === 'question' && activeQuestionId !== null) {
         const question = loadedQuestions.find((item) => item.id === activeQuestionId);
-        if (question && loadedSubmissions.some((item) => item.questionId === activeQuestionId)) renderQuestionPage(question);
+        // 鎖定或作廢狀態有變化時才重繪，避免打斷正在輸入的學生
+        if (question && questionLockState(activeQuestionId) !== before) renderQuestionPage(question);
       }
       if (phaseChanged) showPhaseScreen();
     }
@@ -714,10 +815,10 @@ async function synchronizeFromServer() {
 function updateActivityId(sessionData) {
   const nextActivityId = sessionData?.activityId;
   if (nextActivityId !== null && (typeof nextActivityId !== 'string' || nextActivityId.length === 0)) {
-    throw new Error('伺服器回應格式錯誤。');
+    throw new Error(t('error.badResponse'));
   }
   if (sessionData?.phase === '搶答中' && nextActivityId === null) {
-    throw new Error('伺服器回應格式錯誤。');
+    throw new Error(t('error.badResponse'));
   }
   if (activityId !== nextActivityId && activeQuestionId !== null) saveCurrentDraft();
   activityId = nextActivityId;
@@ -734,15 +835,23 @@ function handlePhase(event) {
     reconnectBanner.hidden = true;
     if (update.phase === '已結束' && answeringView === 'question') saveCurrentDraft();
     phase = update.phase;
+    recordServerTime(update);
     if (currentEntry?.valid) showPhaseScreen();
   } catch {
     // Ignore malformed event data; the next session snapshot will resynchronize.
   }
 }
 
-function handleHeartbeat() {
+function handleHeartbeat(event) {
   lastEventAt = Date.now();
   reconnectBanner.hidden = true;
+  // heartbeat 只帶 serverTime：只更新時鐘差，不改倒數結束時間
+  try {
+    const update = typeof event?.data === 'string' ? JSON.parse(event.data) : null;
+    if (update && typeof update === 'object' && !Array.isArray(update)) recordServerTime({ serverTime: update.serverTime });
+  } catch {
+    // Ignore malformed heartbeat data.
+  }
 }
 
 function handleSubmission(event) {
@@ -762,6 +871,7 @@ function handleSubmission(event) {
       submittedAt: update.submittedAt,
     };
     loadedSubmissions = applySubmission(loadedSubmissions, submission);
+    clearResolvedVoids();
     drafts.remove(studentId, submission.questionId);
     renderQuestionGrid(loadedQuestions, loadedSubmissions);
     if (answeringView === 'question' && activeQuestionId === submission.questionId) {
@@ -771,6 +881,46 @@ function handleSubmission(event) {
   } catch {
     // Ignore malformed event data; a later synchronization will reload the group's submissions.
   }
+}
+
+// 重送後作答晚於作廢，作廢提示就會被移除
+function clearResolvedVoids() {
+  const next = reconcileVoided(loadedSubmissions, loadedVoided);
+  loadedSubmissions = next.submissions;
+  loadedVoided = next.voided;
+}
+
+// 本組某題被老師作廢：解鎖並提示可重送（add-student-void-notice design 第 3 節）
+function handleVoid(event) {
+  try {
+    if (typeof event.data !== 'string') return;
+    const update = JSON.parse(event.data);
+    if (!update || typeof update !== 'object' || Array.isArray(update)) return;
+    if (!currentEntry?.valid || !studentId || !isValidQuestionId(update.questionId) || typeof update.voidedAt !== 'string') return;
+    lastEventAt = Date.now();
+    reconnectBanner.hidden = true;
+    const next = applyVoid({ submissions: loadedSubmissions, voided: loadedVoided }, { questionId: update.questionId, voidedAt: update.voidedAt });
+    loadedSubmissions = next.submissions;
+    loadedVoided = next.voided;
+    renderQuestionGrid(loadedQuestions, loadedSubmissions);
+    if (answeringView === 'question' && activeQuestionId === update.questionId) {
+      const question = loadedQuestions.find((item) => item.id === update.questionId);
+      if (question) renderQuestionPage(question);
+    }
+  } catch {
+    // Ignore malformed event data; a later synchronization will reload the group's state.
+  }
+}
+
+// 老師重設活動：回選組頁並說明；上一場的草稿不再儲存（add-student-countdown-and-reset design 第 3 節）
+function handleReset() {
+  if (!currentEntry?.valid) return;
+  lastEventAt = Date.now();
+  reconnectBanner.hidden = true;
+  countdownEndsAt = null;
+  activeQuestionId = null;
+  answeringView = 'grid';
+  showSelection(t('entry.reset'));
 }
 
 function ensureEventSource() {
@@ -792,6 +942,8 @@ function ensureEventSource() {
   source.addEventListener('phase', handlePhase);
   source.addEventListener('heartbeat', handleHeartbeat);
   source.addEventListener('submission', handleSubmission);
+  source.addEventListener('void', handleVoid);
+  source.addEventListener('reset', handleReset);
   source.addEventListener('error', () => {
     if (source !== eventSource) return;
     if (getEventErrorNextStep(source.readyState).action === 'restore-entry') {
@@ -844,7 +996,7 @@ function scheduleClosedEntryRetry(source, requestedStudentId) {
 async function confirmEntryAfterClosedEventSource(source) {
   if (source !== eventSource) return;
   if (!studentId) {
-    showSelection('進場狀態已失效，請重新選擇組別。');
+    showSelection(t('entry.expired'));
     return;
   }
   if (closedEntryCheckSource === source || closedEntryRetrySource === source) return;
@@ -854,17 +1006,17 @@ async function confirmEntryAfterClosedEventSource(source) {
     const entry = await requestJson(`/api/student/entry?studentId=${encodeURIComponent(requestedStudentId)}`);
     if (source !== eventSource || studentId !== requestedStudentId) return;
     clearClosedEntryRetry(source);
-    const next = getStoredEntryNextStep(storedStudentId, entry);
+    const next = getStoredEntryNextStep(storedStudentId, entry, t);
     if (next.screen === 'waiting') {
       showEntryResult(entry);
       return;
     }
-    showSelection(next.message || '進場狀態已失效，請重新選擇組別。');
+    showSelection(next.message || t('entry.expired'));
   } catch (error) {
     if (source !== eventSource || studentId !== requestedStudentId) return;
     if (error.code === 'STUDENT_NOT_ENTERED') {
       clearClosedEntryRetry(source);
-      showSelection('進場狀態已失效，請重新選擇組別。');
+      showSelection(t('entry.expired'));
     } else if (error instanceof TypeError || error?.name === 'AbortError' || error.status >= 500) {
       scheduleClosedEntryRetry(source, requestedStudentId);
     }
@@ -887,7 +1039,7 @@ retryResultsButton.addEventListener('click', () => {
 changeGroupButton.addEventListener('click', () => {
   if (phase !== '準備中') return;
   changingGroup = true;
-  showSelection('請選擇新的組別。');
+  showSelection(t('selection.chooseNew'));
 });
 
 studentId = getStoredStudentId();
