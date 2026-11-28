@@ -29,6 +29,15 @@ export function isStaleRequest(requestId, latestRequestId) {
   return requestId !== latestRequestId;
 }
 
+export function isPhaseSnapshotCurrent(requestPhaseVersion, currentPhaseVersion) {
+  return requestPhaseVersion === currentPhaseVersion;
+}
+
+export function resolveResponsePhase({ responsePhase, currentPhase, requestPhaseVersion, currentPhaseVersion }) {
+  if (!isPhaseSnapshotCurrent(requestPhaseVersion, currentPhaseVersion)) return currentPhase;
+  return responsePhase || currentPhase;
+}
+
 export function getEntryNextStep(response, t = ZH) {
   const entry = response?.data ?? response;
   if (entry?.valid === true) return { screen: 'waiting', entry };
