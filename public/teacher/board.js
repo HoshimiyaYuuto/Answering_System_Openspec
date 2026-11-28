@@ -1,5 +1,22 @@
 // 投影看板頁：只負責 DOM、請求與事件連線，狀態與顯示內容由 board-logic.js 決定（add-projector-board design 第 3 節）
 import { createBoardState, getBoardView, reduceBoard } from './board-logic.js';
+import {
+  applyDocumentLanguage,
+  applyStaticText,
+  createTranslator,
+  detectLanguage,
+  mountLanguageSwitch,
+  readStoredLanguage,
+  storeLanguage,
+  watchLanguage,
+} from '../shared/i18n.js';
+import { TEACHER_MESSAGES, ZH, renderMessage } from './messages.js';
+
+// 介面語言（add-teacher-language-switch design 第 1、6 節）：切換時只重畫，揭曉進度在 state.revealed 不受影響
+let language = detectLanguage(readStoredLanguage(), navigator.languages);
+let t = createTranslator(TEACHER_MESSAGES, language);
+applyDocumentLanguage(language, t('board.pageTitle'));
+applyStaticText(document, t);
 
 const checkingView = document.querySelector('#checking');
 const loginView = document.querySelector('#login');
@@ -20,23 +37,52 @@ const boardError = document.querySelector('#board-error');
 
 let state = createBoardState();
 let events = null;
+// 錯誤訊息以描述保存，切換語言時重畫
+let errorValue = '';
+let checkingValue = null;
+
+const languageSwitch = mountLanguageSwitch(document.querySelector('#language-switch'), {
+  language,
+  label: t('language.label'),
+  onChange: (next) => setLanguage(next),
+});
+
+function setLanguage(next, { store = true } = {}) {
+  if (next === language) return;
+  if (store) storeLanguage(next);
+  language = next;
+  t = createTranslator(TEACHER_MESSAGES, language);
+  applyDocumentLanguage(language, t('board.pageTitle'));
+  applyStaticText(document, t);
+  languageSwitch.update(language, t('language.label'));
+  if (checkingValue) checkingView.textContent = renderMessage(t, checkingValue);
+  showError(errorValue);
+  render();
+}
+
+watchLanguage((next) => setLanguage(next, { store: false }));
 let clockOffset = 0;
 let countdownTimer = null;
 let summaryRequestId = 0;
 
 class RequestError extends Error {
-  constructor(status, code, message) {
+  constructor(status, code, message, messageCode = code) {
     super(message);
     this.status = status;
     this.code = code;
+    this.messageCode = messageCode;
   }
+}
+
+function errorMessage(error) {
+  return { code: error.messageCode ?? error.code, fallback: error.message };
 }
 
 async function requestJson(url) {
   const response = await fetch(url, { headers: { accept: 'application/json' } });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new RequestError(response.status, body?.error?.code, body?.error?.message ?? '伺服器沒有回應，請稍後再試。');
+    throw new RequestError(response.status, body?.error?.code, body?.error?.message ?? ZH('error.NO_RESPONSE'), body?.error?.code ?? 'NO_RESPONSE');
   }
   return body;
 }
@@ -46,9 +92,11 @@ function recordServerTime(data) {
   if (Number.isFinite(serverTime)) clockOffset = serverTime - Date.now();
 }
 
-function showError(message) {
-  boardError.textContent = message;
-  boardError.hidden = message === '';
+function showError(value) {
+  errorValue = value;
+  const text = renderMessage(t, value);
+  boardError.textContent = text;
+  boardError.hidden = text === '';
 }
 
 function handleFailure(error) {
@@ -57,7 +105,7 @@ function handleFailure(error) {
     dispatch({ type: 'authExpired' });
     return true;
   }
-  showError(`無法更新看板：${error.message}`);
+  showError({ key: 'board.updateFailed', params: { message: errorMessage(error) } });
   return false;
 }
 
@@ -156,7 +204,8 @@ async function checkAuth() {
       loadSummary();
     }
   } catch (error) {
-    checkingView.textContent = `無法連線到伺服器：${error.message}`;
+    checkingValue = { key: 'console.connectFailed', params: { message: errorMessage(error) } };
+    checkingView.textContent = renderMessage(t, checkingValue);
   }
 }
 
@@ -194,7 +243,7 @@ function renderResults(results) {
 }
 
 function render() {
-  const view = getBoardView(state, Date.now() + clockOffset);
+  const view = getBoardView(state, Date.now() + clockOffset, t);
   checkingView.hidden = view.view !== 'checking';
   loginView.hidden = view.view !== 'login';
   boardView.hidden = view.view !== 'board';
@@ -206,7 +255,7 @@ function render() {
 
   phaseHeading.textContent = view.phaseText;
   countdownDisplay.hidden = view.countdownText === '';
-  countdownDisplay.textContent = view.countdownText === '' ? '' : `剩餘 ${view.countdownText}`;
+  countdownDisplay.textContent = view.countdownText === '' ? '' : t('board.countdown', { time: view.countdownText });
   updateCountdownTimer(view.countdownText !== '');
 
   presenceSection.hidden = view.results !== null || view.groups.length === 0;

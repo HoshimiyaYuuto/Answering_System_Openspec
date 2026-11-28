@@ -387,6 +387,7 @@ Request：
       { "id": 3, "type": "single", "blankCount": 1, "prefixes": [""] }
     ],
     "warnings": [],
+    "warningDetails": [],
     "replacesExisting": false
   }
 }
@@ -394,7 +395,8 @@ Request：
 
 - `id` 為學習單上的題號，不重新編號（可能不連續）。送出、結果與匯出一律以此 `id` 作為題號。
 - `type` 為 `single`（單題）或 `group`（題組）。
-- `warnings` 為提醒文字陣列，例如作答格已有非前綴內容。
+- `warnings` 為提醒文字陣列（繁體中文），例如作答格已有非前綴內容。
+- `warningDetails` 與 `warnings` 一一對應、順序相同，供介面依語言組句（`add-teacher-language-switch`）。每筆為 `{ "code", "questionId", "blankIndex", "cell" }`；目前唯一的代碼是 `ANSWER_CELL_NOT_EMPTY`（作答格已有內容，匯出時會被取代），例如 `{ "code": "ANSWER_CELL_NOT_EMPTY", "questionId": 2, "blankIndex": 1, "cell": "C7" }`。用戶端遇到不認得的 `code` 時應改顯示 `warnings` 對應的文字。
 - `replacesExisting` 為 `true` 時，表示目前已有題目，確認後會被取代。
 - server 只保留最新一份預覽；取得新預覽後，舊的 `previewId` 失效。取消匯入只需丟棄預覽，不需呼叫 API。
 
@@ -433,6 +435,7 @@ Request：
       "blankCount": 6,
       "questions": [{ "id": 1, "type": "group", "blankCount": 2, "prefixes": ["（1）", "（2）"] }],
       "warnings": [],
+      "warningDetails": [],
       "importedAt": "2026-11-17T09:00:00.000Z"
     }
   }

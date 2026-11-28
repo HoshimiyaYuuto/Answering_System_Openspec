@@ -2,6 +2,7 @@ import {
   createConsoleState,
   describeAction,
   describeFairRanking,
+  describeLoginError,
   describeSummary,
   formatRemaining,
   getConsoleControls,
@@ -15,6 +16,7 @@ import {
   createRequestSequence,
   describeCurrent,
   describePreview,
+  describeWarnings,
   getBlockedReason,
   getImportControls,
   getSummaryRows,
@@ -22,13 +24,78 @@ import {
 } from './import-logic.js';
 import { createExportState, fileNameFromDisposition, getExportView, reduceExport } from './export-logic.js';
 import { createMonitorState, getMonitorView, reduceMonitor } from './monitor-logic.js';
+import {
+  applyDocumentLanguage,
+  applyStaticText,
+  createTranslator,
+  detectLanguage,
+  mountLanguageSwitch,
+  readStoredLanguage,
+  storeLanguage,
+  watchLanguage,
+} from '../shared/i18n.js';
+import { TEACHER_MESSAGES, ZH, renderMessage } from './messages.js';
 
+// ---- 介面語言（add-teacher-language-switch design 第 1、2 節） ----
+// 切換時不重新載入：換掉 t 後重畫各區塊，所有 reducer 狀態與輸入框都保留
+
+let language = detectLanguage(readStoredLanguage(), navigator.languages);
+let t = createTranslator(TEACHER_MESSAGES, language);
+applyDocumentLanguage(language, t('page.title'));
+applyStaticText(document, t);
+
+// 直接寫在元素上的訊息（載入失敗、組別結果等）記下描述，切換語言時用新語言重畫
+const shownMessages = new Map();
+function showMessage(element, value) {
+  const text = renderMessage(t, value);
+  element.textContent = text;
+  shownMessages.set(element, { value, text });
+}
+
+const languageSwitch = mountLanguageSwitch(document.querySelector('#language-switch'), {
+  language,
+  label: t('language.label'),
+  onChange: (next) => setLanguage(next),
+});
+
+function setLanguage(next, { store = true } = {}) {
+  if (next === language) return;
+  if (store) storeLanguage(next);
+  // 切換前仍顯示在畫面上的訊息，重畫後要用新語言保留
+  const visible = [...shownMessages.entries()]
+    .filter(([element, entry]) => element.textContent === entry.text)
+    .map(([element, entry]) => [element, entry, element.hidden]);
+  language = next;
+  t = createTranslator(TEACHER_MESSAGES, language);
+  applyDocumentLanguage(language, t('page.title'));
+  applyStaticText(document, t);
+  languageSwitch.update(language, t('language.label'));
+  renderConsole();
+  renderImport();
+  renderExport();
+  renderMonitor();
+  relabelGroups();
+  for (const [element, entry, hidden] of visible) {
+    showMessage(element, entry.value);
+    element.hidden = hidden;
+  }
+}
+
+watchLanguage((next) => setLanguage(next, { store: false }));
+
+// messageCode：用來翻譯的代碼；沒有伺服器代碼時用前端自己的（例如 NO_RESPONSE）
 class ApiError extends Error {
-  constructor(message, code, status) {
+  constructor(message, code, status, messageCode = code) {
     super(message);
     this.code = code;
     this.status = status;
+    this.messageCode = messageCode;
   }
+}
+
+// 錯誤以描述傳給 reducer 與 showMessage，畫面時才依語言組字
+function errorMessage(error) {
+  return { code: error.messageCode ?? error.code, fallback: error.message };
 }
 
 async function requestJson(path, options) {
@@ -36,7 +103,7 @@ async function requestJson(path, options) {
   try {
     response = await fetch(path, options);
   } catch {
-    throw new ApiError('伺服器沒有回應，請稍後再試。');
+    throw new ApiError(ZH('error.NO_RESPONSE'), undefined, undefined, 'NO_RESPONSE');
   }
   let body = null;
   try {
@@ -45,7 +112,7 @@ async function requestJson(path, options) {
     // 非 JSON 回應視為伺服器錯誤
   }
   if (!response.ok) {
-    throw new ApiError(body?.error?.message || '伺服器發生錯誤。', body?.error?.code, response.status);
+    throw new ApiError(body?.error?.message || ZH('error.generic'), body?.error?.code, response.status, body?.error?.code ?? 'generic');
   }
   return body;
 }
@@ -112,7 +179,7 @@ function renderCountdown() {
   const running = consoleState.view === 'console' && consoleState.summary?.phase === '搶答中' && countdownEndsAt !== null;
   countdownLabel.hidden = !running;
   countdownRemaining.hidden = !running;
-  countdownRemaining.textContent = running ? `剩餘 ${formatRemaining(countdownEndsAt, Date.now() + clockOffset)}` : '';
+  countdownRemaining.textContent = running ? t('session.countdownRemaining', { time: formatRemaining(countdownEndsAt, Date.now() + clockOffset) }) : '';
   if (running && countdownTimer === null) countdownTimer = setInterval(renderCountdown, 1000);
   if (!running && countdownTimer !== null) {
     clearInterval(countdownTimer);
@@ -132,10 +199,10 @@ function renderConsole() {
 
   loginSubmit.disabled = !controls.canLogin;
   passwordInput.disabled = !controls.canLogin;
-  loginSubmit.textContent = consoleState.loggingIn ? '登入中…' : '登入';
-  loginMessage.textContent = consoleState.loginError;
+  loginSubmit.textContent = consoleState.loggingIn ? t('login.submitting') : t('login.submit');
+  loginMessage.textContent = describeLoginError(consoleState, t);
 
-  const { phase, counts } = describeSummary(consoleState.summary);
+  const { phase, counts } = describeSummary(consoleState.summary, t);
   summaryPhase.textContent = phase;
   summaryCounts.textContent = counts;
   startButton.disabled = !controls.canStart;
@@ -150,11 +217,11 @@ function renderConsole() {
   countdownSeconds.disabled = !controls.canEditCountdown;
   countdownFields.hidden = !countdownEnabled.checked;
   fairRanking.disabled = !controls.canEditFairRanking;
-  const fairRankingText = describeFairRanking(consoleState.summary && { ...consoleState.summary, fairRankingEnabled });
+  const fairRankingText = describeFairRanking(consoleState.summary && { ...consoleState.summary, fairRankingEnabled }, t);
   fairRankingLabel.hidden = fairRankingText === '';
   fairRankingState.hidden = fairRankingText === '';
   fairRankingState.textContent = fairRankingText;
-  sessionMessage.textContent = describeAction(consoleState);
+  sessionMessage.textContent = describeAction(consoleState, t);
 
   renderCountdown();
   renderGroupsLock();
@@ -187,7 +254,7 @@ async function loadSummary() {
     dispatchExport({ type: 'phaseChanged', phase: data.phase });
   } catch (error) {
     if (!summaryRequests.isLatest(requestId)) return;
-    sessionMessage.textContent = `無法取得活動狀態：${error.message}`;
+    showMessage(sessionMessage, { key: 'session.loadFailed', params: { message: errorMessage(error) } });
   }
 }
 
@@ -252,7 +319,7 @@ async function loadAuth() {
     dispatchConsole({ type: 'authLoaded', ...data });
     if (consoleState.view === 'console') enterConsole();
   } catch (error) {
-    checkingView.textContent = `無法連線到伺服器：${error.message}`;
+    showMessage(checkingView, { key: 'console.connectFailed', params: { message: errorMessage(error) } });
   }
 }
 
@@ -268,7 +335,7 @@ loginForm.addEventListener('submit', async (event) => {
     enterConsole();
   } catch (error) {
     passwordInput.value = '';
-    dispatchConsole({ type: 'loginFailed', code: error.code, message: error.status ? error.message : undefined });
+    dispatchConsole({ type: 'loginFailed', code: error.code, message: error.status ? errorMessage(error) : undefined });
     if (consoleState.view === 'login') passwordInput.focus();
   }
 });
@@ -292,7 +359,7 @@ startButton.addEventListener('click', async () => {
     seconds: countdownSeconds.value,
   });
   if (!countdown.ok) {
-    dispatchConsole({ type: 'startFailed', message: countdown.message });
+    dispatchConsole({ type: 'startFailed', message: { key: 'session.countdownRange' } });
     return;
   }
   dispatchConsole({ type: 'requestStart' });
@@ -306,7 +373,7 @@ startButton.addEventListener('click', async () => {
     dispatchConsole({ type: 'startDone', phase: data.phase });
     dispatchImport({ type: 'phaseChanged', phase: data.phase });
   } catch (error) {
-    if (!handleAuthError(error)) dispatchConsole({ type: 'startFailed', message: error.message });
+    if (!handleAuthError(error)) dispatchConsole({ type: 'startFailed', message: errorMessage(error) });
   }
   if (consoleState.view === 'console') loadSummary();
 });
@@ -331,7 +398,7 @@ endConfirmYes.addEventListener('click', async () => {
     } catch {
       // 讀不到最新階段時維持畫面上的階段
     }
-    dispatchConsole({ type: 'endFailed', code: error.code, message: error.message, phase });
+    dispatchConsole({ type: 'endFailed', code: error.code, message: errorMessage(error), phase });
   }
   if (consoleState.view === 'console') loadSummary();
 });
@@ -360,7 +427,7 @@ resetConfirmYes.addEventListener('click', async () => {
     } catch {
       // 讀不到最新階段時維持畫面上的階段
     }
-    dispatchConsole({ type: 'resetFailed', code: error.code, message: error.message, phase });
+    dispatchConsole({ type: 'resetFailed', code: error.code, message: errorMessage(error), phase });
   }
   if (consoleState.view === 'console') {
     loadSummary();
@@ -386,7 +453,7 @@ const groupsBlocked = document.querySelector('#groups-blocked');
 let groupsBusy = false;
 
 function renderGroupsLock() {
-  const reason = getSetupBlockedReason(currentPhase());
+  const reason = getSetupBlockedReason(currentPhase(), t);
   const locked = !getConsoleControls(consoleState).canSetup;
   groupsBlocked.textContent = reason;
   groupsBlocked.hidden = reason === '';
@@ -399,7 +466,7 @@ function renderGroupsLock() {
 function renderGroups(groups) {
   groupList.replaceChildren(...groups.map((group) => {
     const row = document.createElement('label');
-    row.textContent = `第 ${group.id} 組名稱`;
+    row.append(document.createTextNode(t('groups.nameLabel', { id: group.id })));
     const input = document.createElement('input');
     input.type = 'text';
     input.maxLength = 30;
@@ -411,6 +478,14 @@ function renderGroups(groups) {
   renderGroupsLock();
 }
 
+// 切換語言時只換每列 label 的文字，不重建輸入框，保留老師正在編輯的名稱
+function relabelGroups() {
+  for (const input of groupList.querySelectorAll('input[data-group-id]')) {
+    const text = input.parentElement?.firstChild;
+    if (text?.nodeType === Node.TEXT_NODE) text.textContent = t('groups.nameLabel', { id: Number(input.dataset.groupId) });
+  }
+}
+
 const groupRequests = createRequestSequence();
 
 async function loadGroups() {
@@ -419,11 +494,11 @@ async function loadGroups() {
     const { data } = await requestJson('/api/groups');
     if (groupRequests.isLatest(requestId)) renderGroups(data.groups);
   } catch (error) {
-    if (groupRequests.isLatest(requestId)) message.textContent = error.message;
+    if (groupRequests.isLatest(requestId)) showMessage(message, errorMessage(error));
   }
 }
 
-async function submitGroups(send, successText) {
+async function submitGroups(send, successMessage) {
   groupsBusy = true;
   renderGroupsLock();
   const requestId = groupRequests.next();
@@ -431,10 +506,10 @@ async function submitGroups(send, successText) {
     const { data } = await send();
     if (!groupRequests.isLatest(requestId)) return;
     renderGroups(data.groups);
-    message.textContent = successText;
+    showMessage(message, successMessage);
     loadSummary();
   } catch (error) {
-    if (!handleAuthError(error)) message.textContent = error.message;
+    if (!handleAuthError(error)) showMessage(message, errorMessage(error));
   } finally {
     groupsBusy = false;
     renderGroupsLock();
@@ -444,10 +519,10 @@ async function submitGroups(send, successText) {
 generateButton.addEventListener('click', () => {
   const count = Number(countInput.value);
   if (!Number.isInteger(count) || count < 1 || count > 100) {
-    message.textContent = '組數必須是 1 到 100 的整數。';
+    showMessage(message, { key: 'groups.countInvalid' });
     return;
   }
-  submitGroups(() => postJson('/api/groups/generate', { count }), '已產生組別，確認名稱後按「套用組別」。');
+  submitGroups(() => postJson('/api/groups/generate', { count }), { key: 'groups.generated' });
 });
 
 applyButton.addEventListener('click', () => {
@@ -456,14 +531,14 @@ applyButton.addEventListener('click', () => {
     name: input.value,
   }));
   if (!groups.length) {
-    message.textContent = '請先載入或產生組別。';
+    showMessage(message, { key: 'groups.empty' });
     return;
   }
   submitGroups(() => requestJson('/api/groups', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ groups }),
-  }), '組別設定已套用。');
+  }), { key: 'groups.applied' });
 });
 
 // ---- 匯入學習單 ----
@@ -507,8 +582,8 @@ function summaryRow(row) {
 
 function renderImport() {
   const controls = getImportControls(importState);
-  const blockedReason = getBlockedReason(importState);
-  importCurrent.textContent = describeCurrent(importState.current);
+  const blockedReason = getBlockedReason(importState, t);
+  importCurrent.textContent = describeCurrent(importState.current, t);
   importBlocked.textContent = blockedReason;
   importBlocked.hidden = blockedReason === '';
   importFile.disabled = !controls.canSubmit;
@@ -520,13 +595,13 @@ function renderImport() {
 
   importSummary.hidden = !controls.showSummary;
   const preview = controls.showSummary ? importState.preview : null;
-  importSummaryLines.replaceChildren(...(preview ? listItems(describePreview(preview)) : []));
-  importWarnings.replaceChildren(...(preview ? listItems(preview.warnings) : []));
-  importRows.replaceChildren(...(preview ? getSummaryRows(preview).map(summaryRow) : []));
+  importSummaryLines.replaceChildren(...(preview ? listItems(describePreview(preview, t)) : []));
+  importWarnings.replaceChildren(...(preview ? listItems(describeWarnings(preview, t)) : []));
+  importRows.replaceChildren(...(preview ? getSummaryRows(preview, t).map(summaryRow) : []));
 
-  if (importState.view === 'loading') importMessage.textContent = '讀取中…';
-  else if (importState.view === 'confirming') importMessage.textContent = '套用中…';
-  else importMessage.textContent = importState.error;
+  if (importState.view === 'loading') importMessage.textContent = t('common.loading');
+  else if (importState.view === 'confirming') importMessage.textContent = t('import.applying');
+  else importMessage.textContent = renderMessage(t, importState.error);
 }
 
 function dispatchImport(event) {
@@ -542,7 +617,7 @@ async function loadImportStatus() {
     dispatchImport({ type: 'loaded', current: data.current, phase: currentPhase() });
   } catch (error) {
     if (!statusRequests.isLatest(requestId) || handleAuthError(error)) return;
-    importCurrent.textContent = `無法取得匯入狀態：${error.message}`;
+    showMessage(importCurrent, { key: 'import.loadFailed', params: { message: errorMessage(error) } });
   }
 }
 
@@ -555,7 +630,7 @@ async function requestPreview(send) {
     dispatchImport({ type: 'previewLoaded', preview: data });
   } catch (error) {
     if (!importRequests.isLatest(requestId)) return;
-    dispatchImport({ type: 'previewFailed', message: error.message });
+    dispatchImport({ type: 'previewFailed', message: errorMessage(error) });
     if (!handleAuthError(error)) loadImportStatus();
   }
 }
@@ -563,11 +638,11 @@ async function requestPreview(send) {
 importUploadButton.addEventListener('click', () => {
   const file = importFile.files?.[0];
   if (!file) {
-    dispatchImport({ type: 'previewFailed', message: '請先選擇 xlsx 檔。' });
+    dispatchImport({ type: 'previewFailed', message: { key: 'import.noFile' } });
     return;
   }
   if (file.size > MAX_IMPORT_BYTES) {
-    dispatchImport({ type: 'previewFailed', message: '檔案超過 5 MiB 上限。' });
+    dispatchImport({ type: 'previewFailed', message: { key: 'import.tooLarge' } });
     return;
   }
   requestPreview(() => requestJson('/api/teacher/guided-notes/preview/file', {
@@ -580,7 +655,7 @@ importUploadButton.addEventListener('click', () => {
 importLinkButton.addEventListener('click', () => {
   const url = importLink.value.trim();
   if (!url) {
-    dispatchImport({ type: 'previewFailed', message: '請先貼上 Google 試算表連結。' });
+    dispatchImport({ type: 'previewFailed', message: { key: 'import.noLink' } });
     return;
   }
   requestPreview(() => postJson('/api/teacher/guided-notes/preview/link', { url }));
@@ -601,7 +676,7 @@ importConfirmButton.addEventListener('click', async () => {
     loadExportConfig();
   } catch (error) {
     if (!importRequests.isLatest(requestId)) return;
-    dispatchImport({ type: 'confirmFailed', message: error.message });
+    dispatchImport({ type: 'confirmFailed', message: errorMessage(error) });
     if (!handleAuthError(error)) loadImportStatus();
   }
 });
@@ -622,7 +697,7 @@ let exportState = createExportState();
 const exportConfigRequests = createRequestSequence();
 
 function renderExport() {
-  const view = getExportView(exportState);
+  const view = getExportView(exportState, t);
   exportDescription.textContent = view.description;
   exportWritebackButton.disabled = !view.canWriteback;
   exportWritebackButton.textContent = view.writebackLabel;
@@ -659,7 +734,7 @@ exportWritebackButton.addEventListener('click', async () => {
     dispatchExport({ type: 'writebackDone', ...data });
   } catch (error) {
     if (handleAuthError(error)) return;
-    dispatchExport({ type: 'writebackFailed', message: error.message });
+    dispatchExport({ type: 'writebackFailed', message: errorMessage(error) });
   }
 });
 
@@ -669,7 +744,7 @@ async function downloadFile(url, fallbackName) {
   try {
     response = await fetch(url);
   } catch {
-    throw new ApiError('伺服器沒有回應，請稍後再試。');
+    throw new ApiError(ZH('error.NO_RESPONSE'), undefined, undefined, 'NO_RESPONSE');
   }
   if (!response.ok) {
     let body = null;
@@ -678,7 +753,7 @@ async function downloadFile(url, fallbackName) {
     } catch {
       // 非 JSON 回應視為伺服器錯誤
     }
-    throw new ApiError(body?.error?.message || '伺服器發生錯誤。', body?.error?.code, response.status);
+    throw new ApiError(body?.error?.message || ZH('error.generic'), body?.error?.code, response.status, body?.error?.code ?? 'generic');
   }
   const blob = await response.blob();
   const link = document.createElement('a');
@@ -698,7 +773,7 @@ exportDownloadButton.addEventListener('click', async () => {
     dispatchExport({ type: 'downloadDone' });
   } catch (error) {
     if (handleAuthError(error)) return;
-    dispatchExport({ type: 'downloadFailed', message: error.message });
+    dispatchExport({ type: 'downloadFailed', message: errorMessage(error) });
   }
 });
 
@@ -710,7 +785,7 @@ exportCsvButton.addEventListener('click', async () => {
     dispatchExport({ type: 'csvDone' });
   } catch (error) {
     if (handleAuthError(error)) return;
-    dispatchExport({ type: 'csvFailed', message: error.message });
+    dispatchExport({ type: 'csvFailed', message: errorMessage(error) });
   }
 });
 
@@ -726,7 +801,7 @@ const openQuestions = new Set();
 const pendingVoids = new Set();
 
 function renderMonitor() {
-  const view = getMonitorView(monitorState);
+  const view = getMonitorView(monitorState, t);
   monitorTitle.textContent = view.title;
   monitorHint.textContent = view.hint;
   monitorHint.hidden = view.hint === '';
@@ -754,7 +829,7 @@ function renderMonitor() {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'danger void-button';
-        button.textContent = '作廢';
+        button.textContent = t('monitor.void');
         button.dataset.questionId = String(questionId);
         button.dataset.rank = String(rank);
         button.dataset.groupName = groupName;
@@ -784,7 +859,7 @@ monitorList.addEventListener('click', (event) => {
   if (!button) return;
   const questionId = Number(button.dataset.questionId);
   const rank = Number(button.dataset.rank);
-  if (!window.confirm(`確定作廢「${button.dataset.groupName}」第 ${questionId} 題的作答？該組可重新送出。`)) return;
+  if (!window.confirm(t('monitor.voidConfirm', { group: button.dataset.groupName, id: questionId }))) return;
   voidSubmission(questionId, rank);
 });
 
@@ -807,7 +882,7 @@ async function voidSubmission(questionId, rank) {
     renderMonitor();
     if (handleAuthError(error)) return;
     monitorHint.hidden = false;
-    monitorHint.textContent = `作廢失敗：${error.message}`;
+    showMessage(monitorHint, { key: 'monitor.voidFailed', params: { message: errorMessage(error) } });
   }
 }
 
@@ -821,7 +896,7 @@ async function loadMonitor() {
     dispatchMonitor({ type: 'monitorFailed', seq });
     if (!handleAuthError(error) && seq === monitorState.requestSeq) {
       monitorHint.hidden = false;
-      monitorHint.textContent = `無法取得作答資料：${error.message}`;
+      showMessage(monitorHint, { key: 'monitor.loadFailed', params: { message: errorMessage(error) } });
     }
   }
 }

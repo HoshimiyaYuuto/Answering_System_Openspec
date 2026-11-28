@@ -1,3 +1,5 @@
+import { ZH } from './messages.js';
+
 const PREPARING = '準備中';
 const BUZZING = '搶答中';
 const ENDED = '已結束';
@@ -36,21 +38,21 @@ export function formatLocalTime(iso) {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-function answerText(answers) {
-  return `「${answers.join('／')}」`;
+function answerText(answers, t) {
+  return t('monitor.answer', { answers: answers.join(t('monitor.answerSeparator')) });
 }
 
-function summaryOf(question, phase, groupCount) {
+function summaryOf(question, phase, groupCount, t) {
   if (phase === ENDED) {
-    if (!question.settled) return '判定中';
-    if (!question.winner) return '無人作答';
-    const fair = question.winnerSource === 'fair' ? '（公平順位改判）' : '';
-    return `${question.winner.groupName} ${answerText(question.winner.answers)}${fair}`;
+    if (!question.settled) return t('monitor.judging');
+    if (!question.winner) return t('monitor.noAnswer');
+    const fair = question.winnerSource === 'fair' ? t('monitor.fair') : '';
+    return t('monitor.winner', { group: question.winner.groupName, answer: answerText(question.winner.answers, t), fair });
   }
-  const count = `已送出 ${question.submittedCount}／${groupCount} 組`;
-  if (!question.settled) return `${count}，判定中`;
-  if (!question.winner) return count;
-  return `${count}，第 1 名：${question.winner.groupName} ${answerText(question.winner.answers)}`;
+  const submitted = t('monitor.submitted', { count: question.submittedCount, total: groupCount });
+  if (!question.settled) return t('monitor.submittedJudging', { submitted });
+  if (!question.winner) return submitted;
+  return t('monitor.submittedFirst', { submitted, group: question.winner.groupName, answer: answerText(question.winner.answers, t) });
 }
 
 // 明細順序：有效作答依名次（公平順位改判後名次可能與送達順序不同），已作廢的依送達順序排在最後；
@@ -65,40 +67,43 @@ function orderedEntries(entries) {
 }
 
 // 只有搶答中的有效作答可以作廢（add-submission-void design 第 6 節）
-function detailsOf(question, phase) {
+function detailsOf(question, phase, t) {
   const lines = orderedEntries(question.entries).map((entry) => ({
     text: [
-      entry.status === 'valid' ? (entry.place ? `第 ${entry.place} 名` : '判定中') : '已作廢',
+      entry.status === 'valid' ? (entry.place ? t('monitor.place', { place: entry.place }) : t('monitor.judging')) : t('monitor.voided'),
       entry.groupName,
-      answerText(entry.answers),
+      answerText(entry.answers, t),
       formatLocalTime(entry.submittedAt),
-    ].join('　'),
+    ].join(t('monitor.detailSeparator')),
     voided: entry.status !== 'valid',
     ...(phase === BUZZING && entry.status === 'valid'
       ? { voidAction: { questionId: question.id, rank: entry.rank, groupName: entry.groupName } }
       : {}),
   }));
   if (question.notSubmitted.length > 0) {
-    lines.push({ text: `未送出：${question.notSubmitted.map(({ groupName }) => groupName).join('、')}`, voided: false });
+    lines.push({
+      text: t('monitor.notSubmitted', { groups: question.notSubmitted.map(({ groupName }) => groupName).join(t('monitor.groupSeparator')) }),
+      voided: false,
+    });
   }
   return lines;
 }
 
-export function getMonitorView(state) {
+export function getMonitorView(state, t = ZH) {
   const data = state.data;
-  if (!data) return { title: '作答監看', hint: '讀取中…', rows: [] };
-  const title = data.phase === ENDED ? '搶答結果' : '作答監看';
-  if (data.phase === PREPARING) return { title, hint: '開始搶答後會顯示各組作答。', rows: [] };
-  if (data.questions.length === 0) return { title, hint: '尚未匯入題目。', rows: [] };
+  if (!data) return { title: t('monitor.title'), hint: t('common.loading'), rows: [] };
+  const title = data.phase === ENDED ? t('monitor.resultsTitle') : t('monitor.title');
+  if (data.phase === PREPARING) return { title, hint: t('monitor.notStarted'), rows: [] };
+  if (data.questions.length === 0) return { title, hint: t('monitor.noQuestions'), rows: [] };
   return {
     title,
     hint: '',
     rows: data.questions.map((question) => ({
       id: question.id,
-      label: `第 ${question.id} 題`,
+      label: t('monitor.questionLabel', { id: question.id }),
       prompt: question.prompt,
-      summary: summaryOf(question, data.phase, data.groupCount),
-      details: detailsOf(question, data.phase),
+      summary: summaryOf(question, data.phase, data.groupCount, t),
+      details: detailsOf(question, data.phase, t),
     })),
   };
 }

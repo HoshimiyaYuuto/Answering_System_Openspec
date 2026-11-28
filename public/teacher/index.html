@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f7fb">
-  <title>教師控制台｜課堂搶答</title>
+  <title data-i18n="page.title">教師控制台｜課堂搶答</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; color: #172033; background: #f4f7fb; }
     * { box-sizing: border-box; }
@@ -43,6 +43,10 @@
     .confirm { margin-top: 12px; padding: 12px; border-radius: 12px; background: #fff3f0; }
     .confirm p { margin: 0; color: #7d1c13; font-weight: 700; }
     .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+    .language-switch { display: inline-flex; border: 1px solid #aab5c8; border-radius: 10px; overflow: hidden; }
+    .language-switch button { width: auto; min-height: 40px; margin: 0; padding: 6px 14px; border-radius: 0; color: #17366f; background: white; font-size: .95rem; }
+    .language-switch button[aria-pressed="true"] { color: white; background: #17366f; }
     .header button { width: auto; margin-top: 0; min-height: 44px; }
     .message.ok { color: #1d6b3a; }
     .monitor-list { display: grid; gap: 8px; margin-top: 12px; }
@@ -68,21 +72,24 @@
 <body>
   <main>
     <div class="header">
-      <h1>教師控制台</h1>
-      <button id="logout" type="button" class="secondary" hidden>登出</button>
+      <h1 data-i18n="console.heading">教師控制台</h1>
+      <div class="header-actions">
+        <div id="language-switch" class="language-switch"></div>
+        <button id="logout" type="button" class="secondary" hidden data-i18n="console.logout">登出</button>
+      </div>
     </div>
 
-    <p id="checking-view" class="status">讀取中…</p>
+    <p id="checking-view" class="status" data-i18n="common.loading">讀取中…</p>
 
     <section id="not-configured-view" class="panel" hidden>
-      <h2>需要先設定老師密碼</h2>
-      <p class="notice">server 尚未設定老師密碼，目前無法登入。請在專案根目錄把 <code>.env.example</code> 複製成 <code>.env</code>，將 <code>TEACHER_PASSWORD</code> 改成自己的密碼，再重新啟動 server。</p>
+      <h2 data-i18n="setup.title">需要先設定老師密碼</h2>
+      <p class="notice"><span data-i18n="setup.part1">server 尚未設定老師密碼，目前無法登入。請在專案根目錄把 </span><code>.env.example</code><span data-i18n="setup.part2"> 複製成 </span><code>.env</code><span data-i18n="setup.part3">，將 </span><code>TEACHER_PASSWORD</code><span data-i18n="setup.part4"> 改成自己的密碼，再重新啟動 server。</span></p>
     </section>
 
     <section id="login-view" class="panel" hidden>
-      <h2>老師登入</h2>
+      <h2 data-i18n="login.title">老師登入</h2>
       <form id="login-form">
-        <label for="password">老師密碼</label>
+        <label for="password" data-i18n="login.passwordLabel">老師密碼</label>
         <input id="password" type="password" autocomplete="current-password" required>
         <button id="login-submit" type="submit">登入</button>
       </form>
@@ -91,43 +98,43 @@
 
     <div id="console-view" hidden>
       <section class="panel" aria-labelledby="session-title">
-        <h2 id="session-title">活動狀態</h2>
-        <a id="board-link" class="board-link" href="/teacher/board.html" target="_blank" rel="noopener" hidden>開啟投影看板</a>
+        <h2 id="session-title" data-i18n="session.title">活動狀態</h2>
+        <a id="board-link" class="board-link" href="/teacher/board.html" target="_blank" rel="noopener" hidden data-i18n="session.boardLink">開啟投影看板</a>
         <dl class="summary-grid">
-          <dt>階段</dt><dd id="summary-phase" aria-live="polite">讀取中…</dd>
-          <dt>組別與題目</dt><dd id="summary-counts"></dd>
-          <dt id="countdown-label" hidden>倒數</dt><dd id="countdown-remaining" aria-live="off" hidden></dd>
-          <dt id="fair-ranking-label" hidden>公平順位</dt><dd id="fair-ranking-state" hidden></dd>
+          <dt data-i18n="session.phaseLabel">階段</dt><dd id="summary-phase" aria-live="polite">讀取中…</dd>
+          <dt data-i18n="session.countsLabel">組別與題目</dt><dd id="summary-counts"></dd>
+          <dt id="countdown-label" hidden data-i18n="session.countdownLabel">倒數</dt><dd id="countdown-remaining" aria-live="off" hidden></dd>
+          <dt id="fair-ranking-label" hidden data-i18n="session.fairRankingLabel">公平順位</dt><dd id="fair-ranking-state" hidden></dd>
         </dl>
         <div class="countdown-setup">
-          <label class="check"><input id="countdown-enabled" type="checkbox"> 設定倒數（10 秒到 60 分鐘，時間到自動結束）</label>
+          <label class="check"><input id="countdown-enabled" type="checkbox"> <span data-i18n="session.countdownOption">設定倒數（10 秒到 60 分鐘，時間到自動結束）</span></label>
           <div id="countdown-fields" class="countdown-fields" hidden>
             <div>
-              <label for="countdown-minutes">分</label>
+              <label for="countdown-minutes" data-i18n="session.minutes">分</label>
               <input id="countdown-minutes" type="number" inputmode="numeric" min="0" max="60" step="1" value="5">
             </div>
             <div>
-              <label for="countdown-seconds">秒</label>
+              <label for="countdown-seconds" data-i18n="session.seconds">秒</label>
               <input id="countdown-seconds" type="number" inputmode="numeric" min="0" max="59" step="1" value="0">
             </div>
           </div>
         </div>
         <div class="fair-ranking-setup">
-          <label class="check"><input id="fair-ranking" type="checkbox" aria-describedby="fair-ranking-rule"> 啟用公平順位</label>
-          <p id="fair-ranking-rule" class="hint">某題第一個答案送達後 3 秒內送達的組別視為同一批，同批中已搶答成功題數較少的組別優先，相同再比送達順序。開始後不能變更。</p>
+          <label class="check"><input id="fair-ranking" type="checkbox" aria-describedby="fair-ranking-rule"> <span data-i18n="session.fairRankingOption">啟用公平順位</span></label>
+          <p id="fair-ranking-rule" class="hint" data-i18n="session.fairRankingRule">某題第一個答案送達後 3 秒內送達的組別視為同一批，同批中已搶答成功題數較少的組別優先，相同再比送達順序。開始後不能變更。</p>
         </div>
-        <button id="start" type="button">開始搶答</button>
-        <button id="end" type="button" class="danger">結束搶答</button>
+        <button id="start" type="button" data-i18n="session.start">開始搶答</button>
+        <button id="end" type="button" class="danger" data-i18n="session.end">結束搶答</button>
         <div id="end-confirm" class="confirm" hidden>
-          <p>確定要結束搶答嗎？結束後學生無法再送出，也不能重新開始。</p>
-          <button id="end-confirm-yes" type="button" class="danger">確認結束</button>
-          <button id="end-confirm-no" type="button" class="secondary">取消</button>
+          <p data-i18n="session.endConfirm">確定要結束搶答嗎？結束後學生無法再送出，也不能重新開始。</p>
+          <button id="end-confirm-yes" type="button" class="danger" data-i18n="session.endConfirmYes">確認結束</button>
+          <button id="end-confirm-no" type="button" class="secondary" data-i18n="common.cancel">取消</button>
         </div>
-        <button id="reset" type="button" class="secondary">重設活動</button>
+        <button id="reset" type="button" class="secondary" data-i18n="session.reset">重設活動</button>
         <div id="reset-confirm" class="confirm" hidden>
-          <p>重設後會清空本場作答與學生進場，組別與題目保留。確定要重設嗎？</p>
-          <button id="reset-confirm-yes" type="button" class="danger">確認重設</button>
-          <button id="reset-confirm-no" type="button" class="secondary">取消</button>
+          <p data-i18n="session.resetConfirm">重設後會清空本場作答與學生進場，組別與題目保留。確定要重設嗎？</p>
+          <button id="reset-confirm-yes" type="button" class="danger" data-i18n="session.resetConfirmYes">確認重設</button>
+          <button id="reset-confirm-no" type="button" class="secondary" data-i18n="common.cancel">取消</button>
         </div>
         <p id="session-message" class="message" role="status" aria-live="polite"></p>
       </section>
@@ -139,44 +146,44 @@
       </section>
 
     <section class="panel" aria-labelledby="groups-title">
-      <h2 id="groups-title">組別設定</h2>
+      <h2 id="groups-title" data-i18n="groups.title">組別設定</h2>
       <p id="groups-blocked" class="warning" role="alert" hidden></p>
-      <label for="group-count">組數（1 到 100）</label>
+      <label for="group-count" data-i18n="groups.countLabel">組數（1 到 100）</label>
       <input id="group-count" type="number" min="1" max="100" step="1" value="5">
-      <button id="generate" type="button">一鍵產生</button>
+      <button id="generate" type="button" data-i18n="groups.generate">一鍵產生</button>
       <div id="group-list" class="group-list" aria-live="polite"></div>
-      <button id="apply" type="button">套用組別</button>
+      <button id="apply" type="button" data-i18n="groups.apply">套用組別</button>
       <p id="message" class="message" role="status" aria-live="polite"></p>
     </section>
     <section class="panel" aria-labelledby="import-title">
-      <h2 id="import-title">匯入學習單</h2>
+      <h2 id="import-title" data-i18n="import.title">匯入學習單</h2>
       <p id="import-current" class="status">讀取中…</p>
       <p id="import-blocked" class="warning" role="alert" hidden></p>
-      <label for="import-file">上傳 xlsx 檔（5 MiB 以內）</label>
+      <label for="import-file" data-i18n="import.fileLabel">上傳 xlsx 檔（5 MiB 以內）</label>
       <input id="import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-      <button id="import-upload" type="button">讀取檔案</button>
-      <p class="divider">或</p>
-      <label for="import-link">貼上 Google 試算表連結（需設為「知道連結者可檢視」）</label>
+      <button id="import-upload" type="button" data-i18n="import.readFile">讀取檔案</button>
+      <p class="divider" data-i18n="import.or">或</p>
+      <label for="import-link" data-i18n="import.linkLabel">貼上 Google 試算表連結（需設為「知道連結者可檢視」）</label>
       <input id="import-link" type="url" inputmode="url" placeholder="https://docs.google.com/spreadsheets/d/...">
-      <button id="import-link-submit" type="button">讀取連結</button>
+      <button id="import-link-submit" type="button" data-i18n="import.readLink">讀取連結</button>
       <div id="import-summary" class="summary" hidden>
-        <h3>請核對匯入內容</h3>
+        <h3 data-i18n="import.reviewTitle">請核對匯入內容</h3>
         <ul id="import-summary-lines"></ul>
         <ul id="import-warnings" class="warnings"></ul>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>題號</th><th>類型</th><th>空格</th><th>前綴</th></tr></thead>
+            <thead><tr><th data-i18n="import.colNumber">題號</th><th data-i18n="import.colType">類型</th><th data-i18n="import.colBlanks">空格</th><th data-i18n="import.colPrefixes">前綴</th></tr></thead>
             <tbody id="import-rows"></tbody>
           </table>
         </div>
-        <button id="import-confirm" type="button">確認匯入</button>
-        <button id="import-cancel" type="button" class="secondary">取消</button>
+        <button id="import-confirm" type="button" data-i18n="import.confirm">確認匯入</button>
+        <button id="import-cancel" type="button" class="secondary" data-i18n="common.cancel">取消</button>
       </div>
       <p id="import-message" class="message" role="status" aria-live="polite"></p>
     </section>
 
     <section class="panel" aria-labelledby="export-title">
-      <h2 id="export-title">匯出結果</h2>
+      <h2 id="export-title" data-i18n="export.title">匯出結果</h2>
       <p id="export-description" class="status">活動結束後才能匯出。</p>
       <button id="export-writeback" type="button" disabled>寫回 Google 試算表</button>
       <button id="export-download" type="button" class="secondary" disabled>下載 xlsx</button>

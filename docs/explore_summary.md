@@ -75,7 +75,7 @@
 - **O6 Google Sheets 寫回（D12）**：`export-guided-notes` 須支援「連結匯入 → 寫回線上試算表」。匯入時 server 私下保存試算表 ID 與工作表，供寫回使用；寫回前須重新讀取並以同一套表頭／題號規則重新定位，不可只信匯入時記下的儲存格位置（老師可能在匯入後插列），題號對不上時拒絕寫入並說明原因。服務帳號金鑰只放 `.env` 或 repo 外的檔案路徑，不進 repo。
 - **O7 開始搶答的前置條件**：開始前須至少一組、至少一題，否則 `409 NO_GROUPS`、`409 QUESTIONS_REQUIRED`，檢查順序為階段 → 組別 → 題目（與 SpecKit 的代碼一致，已寫入 `docs/api-contract.md`）。因此之後所有需要「搶答中」的測試與手動驗證，都要先登入、至少有一組一題（development 種子兩者皆有；也可用開發路由 `/api/dev/phase/搶答中` 略過登入與前置條件，僅限開發測試）。
 - **O4 學生端補充**：進場後組別記在瀏覽器本地；搶答中題號格顯示每題「未作答／草稿／已送出」；草稿只存本機，重新整理不消失，老師重設活動後清除。
-- **O8 介面語言切換（對齊 SpecKit 007）**：SpecKit 組已完成繁體中文／English 切換（他們 repo 的 `specs/007-i18n/spec.md`），本組補做以維持功能一致。行為：三個畫面右上角「中文／EN」、預設依瀏覽器語言（`en*` 英文，其餘繁中）、選擇記在 localStorage 且其他分頁跟著改、`<html lang>` 跟著改、伺服器錯誤依代碼在前端翻譯、組名／題目／答案不翻譯。server 回應、API 與共用契約 D1～D25 都不變。學生端由 `add-student-language-switch` 實作；教師控制台與投影看板由 `add-teacher-language-switch` 補上。
+- **O8 介面語言切換（對齊 SpecKit 007）**：SpecKit 組已完成繁體中文／English 切換（他們 repo 的 `specs/007-i18n/spec.md`），本組補做以維持功能一致。行為：三個畫面右上角「中文／EN」、預設依瀏覽器語言（`en*` 英文，其餘繁中）、選擇記在 localStorage 且其他分頁跟著改、`<html lang>` 跟著改、伺服器錯誤依代碼在前端翻譯、組名／題目／答案不翻譯。server 回應、API 與共用契約 D1～D25 都不變。學生端由 `add-student-language-switch` 實作；教師控制台與投影看板由 `add-teacher-language-switch` 實作（切換時原地重畫，保留匯入預覽、組別編輯與看板揭曉進度；匯入摘要新增 `warningDetails` 讓英文版的提醒也是英文，`warnings` 原文不變）。
 
 ## 5. 能力拆分與優先級
 
