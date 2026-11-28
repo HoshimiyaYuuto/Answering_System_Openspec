@@ -103,6 +103,8 @@ export function createApplication({
   app.get('/', (_request, response) => response.redirect('/student/'));
   app.use('/student', express.static(resolve(publicRoot, 'student')));
   app.use('/teacher', express.static(resolve(publicRoot, 'teacher')));
+  // 三個畫面共用的介面語言核心（add-student-language-switch design 第 1 節）
+  app.use('/shared', express.static(resolve(publicRoot, 'shared')));
   app.use(express.json({ limit: '16kb' }));
   const isDevelopment = environment === 'development';
   const groups = createGroupsEntry({ seed: isDevelopment ? createDevelopmentGroupSeed() : [] });

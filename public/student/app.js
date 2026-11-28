@@ -1,5 +1,24 @@
-import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, isReconnecting, isStaleRequest, mergeSubmissions, mergeVoided, reconcileVoided, applyVoid, validateAnswers, formatRemaining, RESET_MESSAGE } from './logic.js';
+import { applySubmission, buildResultsRows, getAnsweringScreen, getEntryNextStep, getEventErrorNextStep, getPhaseDisplay, getQuestionStatus, getResultsLoadNextStep, getStoredEntryNextStep, isReconnecting, isStaleRequest, mergeSubmissions, mergeVoided, reconcileVoided, applyVoid, validateAnswers, formatRemaining } from './logic.js';
 import { createDraftStore } from './drafts.js';
+import {
+  applyDocumentLanguage,
+  applyStaticText,
+  createTranslator,
+  detectLanguage,
+  mountLanguageSwitch,
+  readStoredLanguage,
+  storeLanguage,
+  translateError,
+  watchLanguage,
+} from '../shared/i18n.js';
+import { STUDENT_MESSAGES } from './messages.js';
+
+// 介面語言（add-student-language-switch design 第 4、5 節）：啟動時決定語言；
+// 切換時先存草稿再重新載入，走既有的「重新整理後還原」流程
+const language = detectLanguage(readStoredLanguage(), navigator.languages);
+const t = createTranslator(STUDENT_MESSAGES, language);
+applyDocumentLanguage(language, t('page.title'));
+applyStaticText(document, t);
 
 const selection = document.querySelector('#selection');
 const waiting = document.querySelector('#waiting');
@@ -32,8 +51,22 @@ try {
 const drafts = createDraftStore(draftStorage);
 drafts.setActivityId(null);
 
+function reloadWithLanguage(next, { store = true } = {}) {
+  if (next === language) return;
+  if (store) storeLanguage(next);
+  saveCurrentDraft();
+  window.location.reload();
+}
+
+mountLanguageSwitch(document.querySelector('#language-switch'), {
+  language,
+  label: t('language.label'),
+  onChange: (next) => reloadWithLanguage(next),
+});
+watchLanguage((next) => reloadWithLanguage(next, { store: false }));
+
 const reconnectBanner = document.createElement('p');
-reconnectBanner.textContent = '重新連線中…';
+reconnectBanner.textContent = t('common.reconnecting');
 reconnectBanner.setAttribute('role', 'status');
 reconnectBanner.setAttribute('aria-live', 'polite');
 reconnectBanner.hidden = true;
@@ -41,7 +74,7 @@ document.querySelector('main').prepend(reconnectBanner);
 
 const changeGroupButton = document.createElement('button');
 changeGroupButton.type = 'button';
-changeGroupButton.textContent = '更換組別';
+changeGroupButton.textContent = t('waiting.changeGroup');
 waiting.append(changeGroupButton);
 
 let studentId;
@@ -110,7 +143,7 @@ async function requestJson(path, options) {
   const response = await fetch(path, options);
   const body = await response.json();
   if (!response.ok) {
-    const error = new Error(body?.error?.message || '伺服器發生錯誤。');
+    const error = new Error(translateError(t, body?.error?.code, body?.error?.message || t('error.generic')));
     error.code = body?.error?.code;
     error.status = response.status;
     throw error;
@@ -137,13 +170,13 @@ function showSelection(message = '') {
 }
 
 function updateWaitingView() {
-  const display = getPhaseDisplay(phase);
-  phaseText.textContent = `目前階段：${phase}。${display.message}`;
+  const display = getPhaseDisplay(phase, t);
+  phaseText.textContent = t('waiting.phaseLine', { phase: t(`phase.${phase}`), message: display.message });
   changeGroupButton.hidden = !display.canChangeGroup;
 }
 
 function showEntryResult(response) {
-  const next = getEntryNextStep(response);
+  const next = getEntryNextStep(response, t);
   if (next.screen === 'waiting') {
     clearClosedEntryRetry();
     if (currentEntry?.group?.id !== next.entry.group.id) {
@@ -197,7 +230,7 @@ function recordServerTime(data) {
 function renderCountdown() {
   const running = !answering.hidden && phase === '搶答中' && countdownEndsAt !== null;
   countdownDisplay.hidden = !running;
-  countdownDisplay.textContent = running ? `剩餘時間 ${formatRemaining(countdownEndsAt, Date.now() + clockOffset)}` : '';
+  countdownDisplay.textContent = running ? t('countdown.remaining', { time: formatRemaining(countdownEndsAt, Date.now() + clockOffset) }) : '';
   if (running && countdownTimer === null) countdownTimer = setInterval(renderCountdown, 1000);
   if (!running && countdownTimer !== null) {
     clearInterval(countdownTimer);
@@ -227,7 +260,7 @@ function clearResultsView() {
 }
 
 function renderStudentResults(results) {
-  const view = buildResultsRows(results);
+  const view = buildResultsRows(results, t);
   resultsSummary.textContent = view.summary.text;
   resultsSummary.hidden = false;
   resultsFairRanking.textContent = view.fairRankingNotice;
@@ -235,7 +268,7 @@ function renderStudentResults(results) {
   resultsList.replaceChildren();
   for (const row of view.rows) {
     const item = document.createElement('li');
-    item.textContent = `${row.label}：${row.winnerText}；${row.ownText}`;
+    item.textContent = t('results.row', { label: row.label, winner: row.winnerText, own: row.ownText });
     resultsList.append(item);
   }
   resultsList.hidden = false;
@@ -286,17 +319,17 @@ async function loadStudentResults() {
       body = null;
     }
     if (!response.ok) {
-      const error = new Error(body?.error?.message || '伺服器發生錯誤。');
+      const error = new Error(translateError(t, body?.error?.code, body?.error?.message || t('error.generic')));
       error.status = response.status;
       error.code = body?.error?.code;
       throw error;
     }
-    if (!Array.isArray(body?.data?.questions)) throw new Error('伺服器回應格式錯誤。');
+    if (!Array.isArray(body?.data?.questions)) throw new Error(t('error.badResponse'));
     if (isStaleRequest(requestId, resultsRequestId)) return;
     renderStudentResults({ questions: body.data.questions, fairRankingEnabled: body.data.fairRankingEnabled });
   } catch (error) {
     if (isStaleRequest(requestId, resultsRequestId)) return;
-    const next = getResultsLoadNextStep(Number.isInteger(error.status) ? error.status : null);
+    const next = getResultsLoadNextStep(Number.isInteger(error.status) ? error.status : null, t);
     if (next.action === 'restore-entry') {
       clearResultsView();
       await restoreEntry();
@@ -326,15 +359,10 @@ function renderQuestionGrid(questions, submissions) {
     const hasSubmission = submissions.some((submission) => submission.questionId === question.id);
     if (hasSubmission) drafts.remove(studentId, question.id);
     const hasDraft = drafts.has(studentId, question.id, question.blanks.length);
-    const statusByKey = {
-      unanswered: '未作答',
-      draft: '草稿',
-      submitted: '已送出',
-      voided: '已作廢，可重新送出',
-    };
+    const questionStatus = getQuestionStatus(hasSubmission, hasDraft, isVoidedQuestion(question.id));
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = `第 ${question.id} 題：${statusByKey[getQuestionStatus(hasSubmission, hasDraft, isVoidedQuestion(question.id))]}`;
+    button.textContent = t('grid.button', { id: question.id, status: t(`grid.status.${questionStatus}`) });
     button.addEventListener('click', () => openQuestion(question.id));
     questionGrid.append(button);
   }
@@ -375,20 +403,20 @@ function renderQuestionPage(question, options = {}) {
   questionGrid.hidden = true;
 
   const title = document.createElement('h3');
-  title.textContent = `第 ${question.id} 題`;
+  title.textContent = t('question.title', { id: question.id });
   questionPage.append(title);
 
   const message = document.createElement('p');
   message.className = 'message';
   message.setAttribute('role', 'status');
   message.setAttribute('aria-live', 'polite');
-  const voidedNotice = !locked && isVoidedQuestion(question.id) ? '此題的作答已被老師作廢，請重新填寫後送出。' : '';
-  message.textContent = options.message || (locked ? '已送出' : voidedNotice);
+  const voidedNotice = !locked && isVoidedQuestion(question.id) ? t('question.voidedNotice') : '';
+  message.textContent = options.message || (locked ? t('question.submitted') : voidedNotice);
   questionPage.append(message);
   const validationMessages = [];
 
   blanks.forEach((blank, index) => {
-    const blankLabel = [blank.prefix, blank.prompt].filter(Boolean).join(' ') || `第 ${question.id} 題第 ${index + 1} 格答案`;
+    const blankLabel = [blank.prefix, blank.prompt].filter(Boolean).join(' ') || t('question.blankLabel', { id: question.id, n: index + 1 });
     const label = document.createElement('label');
     label.htmlFor = `answer-${question.id}-${index}`;
     label.textContent = blankLabel;
@@ -422,12 +450,12 @@ function renderQuestionPage(question, options = {}) {
     for (const error of options.validationErrors) {
       if (error.index !== null && validationMessages[error.index]) {
         validationMessages[error.index].textContent = error.reason === 'too-long'
-          ? '答案不可超過 200 字。'
+          ? t('validation.tooLong')
           : error.reason === 'empty'
-            ? '請填寫此空格。'
-            : '答案格式錯誤。';
+            ? t('validation.empty')
+            : t('validation.invalid');
       } else if (error.reason === 'wrong-count') {
-        message.textContent = '請填寫所有空格。';
+        message.textContent = t('validation.allBlanks');
       }
     }
   }
@@ -435,7 +463,7 @@ function renderQuestionPage(question, options = {}) {
   if (!locked) {
     questionSubmitButton = document.createElement('button');
     questionSubmitButton.type = 'button';
-    questionSubmitButton.textContent = isSubmitting ? '送出中…' : '送出答案';
+    questionSubmitButton.textContent = isSubmitting ? t('question.submitting') : t('question.submit');
     questionSubmitButton.disabled = isSubmitting;
     questionSubmitButton.addEventListener('click', submitCurrentQuestion);
     questionPage.append(questionSubmitButton);
@@ -444,7 +472,7 @@ function renderQuestionPage(question, options = {}) {
   questionBackButton = document.createElement('button');
   questionBackButton.type = 'button';
   questionBackButton.className = 'secondary';
-  questionBackButton.textContent = '返回題號格';
+  questionBackButton.textContent = t('question.back');
   questionBackButton.disabled = isSubmitting;
   questionBackButton.addEventListener('click', () => {
     saveCurrentDraft();
@@ -495,10 +523,10 @@ function applyGroupSnapshot(data) {
 // 舊版 server 沒有 voided 欄位時視為空陣列
 function projectVoided(voided) {
   if (voided === undefined) return [];
-  if (!Array.isArray(voided)) throw new Error('伺服器回應格式錯誤。');
+  if (!Array.isArray(voided)) throw new Error(t('error.badResponse'));
   return voided.map((item) => {
     if (!item || typeof item !== 'object' || !isValidQuestionId(item.questionId) || typeof item.voidedAt !== 'string') {
-      throw new Error('伺服器回應格式錯誤。');
+      throw new Error(t('error.badResponse'));
     }
     return { questionId: item.questionId, voidedAt: item.voidedAt };
   });
@@ -515,14 +543,14 @@ function isVoidedQuestion(questionId) {
 }
 
 function projectSubmissions(submissions) {
-  if (!Array.isArray(submissions)) throw new Error('伺服器回應格式錯誤。');
+  if (!Array.isArray(submissions)) throw new Error(t('error.badResponse'));
   return submissions.map((submission) => {
     if (!submission || typeof submission !== 'object'
       || !isValidQuestionId(submission.questionId)
       || !Array.isArray(submission.answers)
       || !submission.answers.every((answer) => typeof answer === 'string')
       || typeof submission.submittedAt !== 'string') {
-      throw new Error('伺服器回應格式錯誤。');
+      throw new Error(t('error.badResponse'));
     }
     return {
       questionId: submission.questionId,
@@ -547,7 +575,7 @@ async function submitCurrentQuestion() {
   const questionId = activeQuestionId;
   isSubmitting = true;
   setQuestionControlsDisabled(true);
-  if (questionSubmitButton) questionSubmitButton.textContent = '送出中…';
+  if (questionSubmitButton) questionSubmitButton.textContent = t('question.submitting');
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -573,7 +601,7 @@ async function submitCurrentQuestion() {
     if (answeringView === 'question' && activeQuestionId === questionId) renderQuestionPage(question);
   } catch (caught) {
     const error = timedOut
-      ? Object.assign(new Error('伺服器沒有回應'), { name: 'AbortError' })
+      ? Object.assign(new Error(t('error.noResponse')), { name: 'AbortError' })
       : caught;
     if (error instanceof TypeError && !error.code) error.type = 'network';
     const next = getSubmitErrorNextStep(error);
@@ -584,7 +612,7 @@ async function submitCurrentQuestion() {
         if (matching) {
           drafts.remove(studentId, questionId);
           if (answeringView === 'question' && activeQuestionId === questionId) {
-            renderQuestionPage(question, { message: '本組已由其他裝置送出' });
+            renderQuestionPage(question, { message: t('question.submittedElsewhere') });
           }
         } else {
           messageForCurrentQuestion(error.message);
@@ -605,13 +633,13 @@ async function submitCurrentQuestion() {
       }
     } else if (next.action === 'restore-entry') {
       saveCurrentDraft();
-      showSelection('進場狀態已失效，請重新選擇組別。');
+      showSelection(t('entry.expired'));
     } else if (next.action === 'reload-questions') {
       saveCurrentDraft();
       await loadAnsweringData();
       messageForCurrentQuestion(error.message);
     } else if (next.action === 'retry') {
-      messageForCurrentQuestion('伺服器沒有回應');
+      messageForCurrentQuestion(t('error.noResponse'));
     } else {
       messageForCurrentQuestion(error.message);
     }
@@ -622,7 +650,7 @@ async function submitCurrentQuestion() {
       const isLocked = loadedSubmissions.some((item) => item.questionId === activeQuestionId);
       setQuestionControlsDisabled(isLocked);
       if (questionBackButton) questionBackButton.disabled = false;
-      if (questionSubmitButton && !isLocked) questionSubmitButton.textContent = '送出答案';
+      if (questionSubmitButton && !isLocked) questionSubmitButton.textContent = t('question.submit');
     }
   }
 }
@@ -638,7 +666,7 @@ async function loadAnsweringData() {
   const requestedStudentId = studentId;
   const requestedGroupId = currentEntry.group?.id;
   const snapshotRequestId = ++submissionsSnapshotRequestId;
-  answeringMessage.textContent = '載入題目中…';
+  answeringMessage.textContent = t('answering.loading');
   answeringMessage.hidden = false;
   questionGrid.hidden = true;
   retryQuestionsButton.hidden = true;
@@ -655,7 +683,7 @@ async function loadAnsweringData() {
     // 先檢查格式，格式錯誤時不改任何狀態
     projectSubmissions(submissionsResponse?.data?.submissions);
     projectVoided(submissionsResponse?.data?.voided);
-    if (!Array.isArray(questions)) throw new Error('伺服器回應格式錯誤。');
+    if (!Array.isArray(questions)) throw new Error(t('error.badResponse'));
     updateActivityId(sessionResponse?.data);
     recordServerTime(sessionResponse?.data);
     loadedQuestions = questions;
@@ -671,10 +699,10 @@ async function loadAnsweringData() {
     if (isStaleRequest(requestId, answeringRequestId)
       || !isCurrentEntryContext(requestedStudentId, requestedGroupId)) return;
     if (error.code === 'STUDENT_NOT_ENTERED') {
-      showSelection('進場狀態已失效，請重新選擇組別。');
+      showSelection(t('entry.expired'));
       return;
     }
-    answeringMessage.textContent = '無法載入題目，請稍後再試';
+    answeringMessage.textContent = t('answering.loadFailed');
     answeringMessage.hidden = false;
     retryQuestionsButton.hidden = false;
   }
@@ -682,14 +710,14 @@ async function loadAnsweringData() {
 
 async function loadGroups(message = '') {
   const requestId = ++groupsRequestId;
-  status.textContent = '載入中…';
+  status.textContent = t('selection.loading');
   groupList.replaceChildren();
   refreshButton.hidden = true;
   try {
     const { data } = await requestJson('/api/groups');
     if (isStaleRequest(requestId, groupsRequestId)) return;
     if (!data.groups.length) {
-      status.textContent = '老師尚未設定組別';
+      status.textContent = t('selection.noGroups');
       refreshButton.hidden = false;
       return;
     }
@@ -712,7 +740,7 @@ async function restoreEntry() {
   if (!studentId) return null;
   try {
     const entry = await requestJson(`/api/student/entry?studentId=${encodeURIComponent(studentId)}`);
-    const next = getStoredEntryNextStep(storedStudentId, entry);
+    const next = getStoredEntryNextStep(storedStudentId, entry, t);
     if (next.screen === 'waiting') showEntryResult(entry);
     else showSelection(next.shouldExplain ? next.message : '');
     return entry;
@@ -735,7 +763,7 @@ async function enterGroup(groupId, button) {
     if (isNewStudent) persistStudentId(pendingStudentId);
     showEntryResult(response);
   } catch (error) {
-    if (error.code === 'GROUP_NOT_FOUND') await loadGroups('這個組別已不存在');
+    if (error.code === 'GROUP_NOT_FOUND') await loadGroups(t('selection.groupGone'));
     else if (error.code === 'GROUP_CHANGE_NOT_ALLOWED' && changingGroup) {
       changingGroup = false;
       await restoreEntry();
@@ -787,10 +815,10 @@ async function synchronizeFromServer() {
 function updateActivityId(sessionData) {
   const nextActivityId = sessionData?.activityId;
   if (nextActivityId !== null && (typeof nextActivityId !== 'string' || nextActivityId.length === 0)) {
-    throw new Error('伺服器回應格式錯誤。');
+    throw new Error(t('error.badResponse'));
   }
   if (sessionData?.phase === '搶答中' && nextActivityId === null) {
-    throw new Error('伺服器回應格式錯誤。');
+    throw new Error(t('error.badResponse'));
   }
   if (activityId !== nextActivityId && activeQuestionId !== null) saveCurrentDraft();
   activityId = nextActivityId;
@@ -892,7 +920,7 @@ function handleReset() {
   countdownEndsAt = null;
   activeQuestionId = null;
   answeringView = 'grid';
-  showSelection(RESET_MESSAGE);
+  showSelection(t('entry.reset'));
 }
 
 function ensureEventSource() {
@@ -968,7 +996,7 @@ function scheduleClosedEntryRetry(source, requestedStudentId) {
 async function confirmEntryAfterClosedEventSource(source) {
   if (source !== eventSource) return;
   if (!studentId) {
-    showSelection('進場狀態已失效，請重新選擇組別。');
+    showSelection(t('entry.expired'));
     return;
   }
   if (closedEntryCheckSource === source || closedEntryRetrySource === source) return;
@@ -978,17 +1006,17 @@ async function confirmEntryAfterClosedEventSource(source) {
     const entry = await requestJson(`/api/student/entry?studentId=${encodeURIComponent(requestedStudentId)}`);
     if (source !== eventSource || studentId !== requestedStudentId) return;
     clearClosedEntryRetry(source);
-    const next = getStoredEntryNextStep(storedStudentId, entry);
+    const next = getStoredEntryNextStep(storedStudentId, entry, t);
     if (next.screen === 'waiting') {
       showEntryResult(entry);
       return;
     }
-    showSelection(next.message || '進場狀態已失效，請重新選擇組別。');
+    showSelection(next.message || t('entry.expired'));
   } catch (error) {
     if (source !== eventSource || studentId !== requestedStudentId) return;
     if (error.code === 'STUDENT_NOT_ENTERED') {
       clearClosedEntryRetry(source);
-      showSelection('進場狀態已失效，請重新選擇組別。');
+      showSelection(t('entry.expired'));
     } else if (error instanceof TypeError || error?.name === 'AbortError' || error.status >= 500) {
       scheduleClosedEntryRetry(source, requestedStudentId);
     }
@@ -1011,7 +1039,7 @@ retryResultsButton.addEventListener('click', () => {
 changeGroupButton.addEventListener('click', () => {
   if (phase !== '準備中') return;
   changingGroup = true;
-  showSelection('請選擇新的組別。');
+  showSelection(t('selection.chooseNew'));
 });
 
 studentId = getStoredStudentId();
